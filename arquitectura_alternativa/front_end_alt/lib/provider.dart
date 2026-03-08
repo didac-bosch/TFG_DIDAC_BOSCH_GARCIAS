@@ -188,6 +188,7 @@ class DronProvider extends ChangeNotifier {
 
   ///////////// HANDLER MENSAJES MQTT ENTRANTES /////////////
   void _handleMessage(String topic, String payload) {
+  //procesador de mensajes que se reciben de la estación tierra. Aquí se actualiza la pantalla mediante el notifyListeners
 
     // TELEMETRÍA
     if (topic == Constants.topicTelemetry) {
