@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'data/http_logic.dart';
 import 'dart:async';
 import 'package:latlong2/latlong.dart';
+import 'package:geolocator/geolocator.dart';   // ← NUEVO
 
 class DronProvider extends ChangeNotifier {
   //notify Listeners() que ayudará a reconstruir todos los widgets que estén suscritos
@@ -37,6 +38,11 @@ class DronProvider extends ChangeNotifier {
   bool _waitingForArm = false;
   DateTime? _armDeadline;
   bool _armConfirmed = false;
+
+  // GPS usuario                               // ← NUEVO
+  LatLng? userPosition;
+  double gpsAccuracy = 0;
+  StreamSubscription<Position>? _gpsSubscription;
 
   void setAltitude(String altValue) {   //set altitude pero solo si está dentro del margen
     final alt = double.tryParse(altValue);
@@ -75,6 +81,37 @@ class DronProvider extends ChangeNotifier {
     }
   }
 
+  ///////////// GPS USUARIO /////////////        // ← NUEVO
+  Future<void> startGPS() async {
+    final permission = await Geolocator.requestPermission();
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      return;
+    }
+
+    _gpsSubscription = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 1,
+      ),
+    ).listen((pos) {
+      gpsAccuracy = pos.accuracy;
+      if (userPosition != null && pos.accuracy > 50) {
+        notifyListeners();
+        return;
+      }
+      userPosition = LatLng(pos.latitude, pos.longitude);
+      notifyListeners();
+    });
+  }
+
+  void stopGPS() {                              // ← NUEVO
+    _gpsSubscription?.cancel();
+    _gpsSubscription = null;
+    userPosition = null;
+    gpsAccuracy = 0;
+  }
+
   ///////////// CONNECT /////////////
   Future<void> connectDron() async {
     isLoading = true; //por si se complica la conexión entra en modo loading
@@ -87,6 +124,7 @@ class DronProvider extends ChangeNotifier {
       isConnected = true; //si se ha podido connected = true
       message = "Connection established!";
       startPolling(); // empieza a recibir telemetría y posición al conectar
+      startGPS();     // ← NUEVO: arranca GPS al conectar
     } catch (error) {
       message = "$error";
     } finally {
@@ -157,6 +195,7 @@ class DronProvider extends ChangeNotifier {
       message = "$error";
     } finally {
       stopPolling(); //al estar desconectado no necesita saber nada más
+      stopGPS();     // ← NUEVO: para GPS al desconectar
       isLoading = false;
       notifyListeners();
     }
@@ -300,6 +339,7 @@ class DronProvider extends ChangeNotifier {
           _armConfirmed = false;
           message = "Awaiting orders";
           stopPolling();
+          stopGPS();    // ← NUEVO: para GPS si se desconecta inesperadamente
           notifyListeners();
           return;
         }

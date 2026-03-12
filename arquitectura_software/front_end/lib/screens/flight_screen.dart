@@ -7,13 +7,16 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 
+
 class FlightScreen extends StatelessWidget {      //stateless + provider 
   const FlightScreen({super.key});
+
 
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>(); //suscripción
+
 
 
     Color getBatteryColor(double bat) {     //función para cambio de color según la batería
@@ -23,8 +26,10 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
     }
 
 
+
     return Scaffold(
       backgroundColor: AppColors.background,
+
 
 
       body: Column(
@@ -97,6 +102,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                 ),
 
 
+
                 // TELEMETRÍA DERECHA
                 Expanded(
                   child: Row(
@@ -114,6 +120,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                         provider.currentMode,
                       ),
                       const SizedBox(width: 48),
+
 
 
                       provider.isLoading    //si está cargando
@@ -165,6 +172,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
           ),
 
 
+
           // ZONA MEDIA (joysticks + camara/mapa)
           Expanded(
             child: Row(
@@ -194,6 +202,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                 ),
 
 
+
                 // ZONA CENTRAL (por ahora mapa con ubicación del dron, falta intercambio con cámara)
                 Expanded(
                   child: Padding(
@@ -203,135 +212,187 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: FlutterMap(    //Crea flutterMap de la librería flutter map
-                        options: MapOptions(
-                          initialCenter: LatLng(          //inicio centrado en la eetac
-                            provider.currentLat != 0.0
-                                ? provider.currentLat
-                                : 41.2765,
-                            provider.currentLon != 0.0
-                                ? provider.currentLon
-                                : 1.9888,
-                          ),
-                          initialZoom: 18,
-                        ),
+                      child: Stack(                          // ← NUEVO: Stack para superponer badge
                         children: [
-                          // Capa de tiles (OpenStreetMap)
-                          TileLayer(
-                            urlTemplate:
-                                'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            userAgentPackageName: 'com.example.app',
-                          ),
-                          // Traza 
-                          if (provider.droneTrail.length > 1)
-                            PolylineLayer(
-                              polylines: [
-                                Polyline(
-                                  points: provider.droneTrail,
-                                  color: const Color.fromARGB(255, 121, 40, 198),
-                                  strokeWidth: 2.5,
-                                ),
-                              ],
+                          FlutterMap(    //Crea flutterMap de la librería flutter map
+                            options: MapOptions(
+                              initialCenter: LatLng(          //inicio centrado en la eetac
+                                provider.currentLat != 0.0
+                                    ? provider.currentLat
+                                    : 41.2765,
+                                provider.currentLon != 0.0
+                                    ? provider.currentLon
+                                    : 1.9888,
+                              ),
+                              initialZoom: 18,
                             ),
-
-
-                          // Vector de velocidad - línea hacia donde se mueve
-                          if (provider.isFlying)
-                            PolylineLayer(
-                              polylines: [
-                                Polyline(
-                                  points: [
-                                    LatLng(provider.currentLat, provider.currentLon),
-                                    _calcVelocityEndPoint(
-                                      provider.currentLat,
-                                      provider.currentLon,
-                                      provider.currentVx / 100, 
-                                      provider.currentVy / 100,
+                            children: [
+                              // Capa de tiles (OpenStreetMap)
+                              TileLayer(
+                                urlTemplate:
+                                    'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                                userAgentPackageName: 'com.example.app',
+                              ),
+                              // Traza 
+                              if (provider.droneTrail.length > 1)
+                                PolylineLayer(
+                                  polylines: [
+                                    Polyline(
+                                      points: provider.droneTrail,
+                                      color: const Color.fromARGB(255, 121, 40, 198),
+                                      strokeWidth: 2.5,
                                     ),
                                   ],
-                                  color: const Color.fromARGB(255, 0, 255, 132),
-                                  strokeWidth: 2.5,
                                 ),
-                              ],
-                            ),
 
 
-                          // Sombra del dron (solo cuando vuela)
-                          if (provider.isFlying)
-                            CircleLayer(
-                              circles: [
-                                CircleMarker(
-                                  point: LatLng(
-                                    provider.currentLat,
-                                    provider.currentLon,
+
+                              // Vector de velocidad - línea hacia donde se mueve
+                              if (provider.isFlying)
+                                PolylineLayer(
+                                  polylines: [
+                                    Polyline(
+                                      points: [
+                                        LatLng(provider.currentLat, provider.currentLon),
+                                        _calcVelocityEndPoint(
+                                          provider.currentLat,
+                                          provider.currentLon,
+                                          provider.currentVx / 100, 
+                                          provider.currentVy / 100,
+                                        ),
+                                      ],
+                                      color: const Color.fromARGB(255, 0, 255, 132),
+                                      strokeWidth: 2.5,
+                                    ),
+                                  ],
+                                ),
+
+
+
+                              // Sombra del dron (solo cuando vuela)
+                              if (provider.isFlying)
+                                CircleLayer(
+                                  circles: [
+                                    CircleMarker(
+                                      point: LatLng(
+                                        provider.currentLat,
+                                        provider.currentLon,
+                                      ),
+                                      radius: 20,
+                                      color: const Color.fromARGB(181, 171, 171, 171),
+                                      borderColor: Colors.grey,
+                                      borderStrokeWidth: 1,
+                                      useRadiusInMeter: false,
+                                    ),
+                                  ],
+                                ),
+
+
+
+                              // dron
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: LatLng(          //en las coords
+                                      provider.currentLat,
+                                      provider.currentLon,
+                                    ),
+                                    width: 48,
+                                    height: 48,
+                                    child: Transform.rotate(
+                                      angle: provider.currentHeading * (pi / 180), 
+                                      child: Image.asset(
+                                        'assets/images/drone_icon.png',
+                                        color: AppColors.primary,
+                                        colorBlendMode: BlendMode.srcIn,
+                                      ),
+                                    ),
                                   ),
-                                  radius: 20,
-                                  color: const Color.fromARGB(181, 171, 171, 171),
-                                  borderColor: Colors.grey,
-                                  borderStrokeWidth: 1,
-                                  useRadiusInMeter: false,
-                                ),
-                              ],
-                            ),
-
-
-                          // dron
-                          MarkerLayer(
-                            markers: [
-                              Marker(
-                                point: LatLng(          //en las coords
-                                  provider.currentLat,
-                                  provider.currentLon,
-                                ),
-                                width: 48,
-                                height: 48,
-                                child: Transform.rotate(
-                                  angle: provider.currentHeading * (pi / 180), 
-                                  child: Image.asset(
-                                    'assets/images/drone_icon.png',
-                                    color: AppColors.primary,
-                                    colorBlendMode: BlendMode.srcIn,
-                                  ),
-                                ),
+                                ],
                               ),
-                            ],
-                          ),
 
 
-                          // Flecha de dirección encima del dron
-                          MarkerLayer(
-                            markers: [
-                              Marker(
-                                point: LatLng(
-                                  provider.currentLat,
-                                  provider.currentLon,
-                                ),
-                                width: 80,
-                                height: 100, 
-                                child: Transform.rotate(
-                                  angle: provider.currentHeading * (pi / 180),    //apunta hacia donde mira el dron
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.start,
-                                    children: [
-                                      Icon(
-                                        Icons.arrow_upward,
-                                        color: AppColors.warning,
+
+                              // Flecha de dirección encima del dron
+                              MarkerLayer(
+                                markers: [
+                                  Marker(
+                                    point: LatLng(
+                                      provider.currentLat,
+                                      provider.currentLon,
+                                    ),
+                                    width: 80,
+                                    height: 100, 
+                                    child: Transform.rotate(
+                                      angle: provider.currentHeading * (pi / 180),    //apunta hacia donde mira el dron
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.start,
+                                        children: [
+                                          Icon(
+                                            Icons.arrow_upward,
+                                            color: AppColors.warning,
+                                            size: 36,
+                                          ),
+                                          const SizedBox( //sized box para separarlo un poco del dron
+                                            height: 20,
+                                          ), 
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+
+                              if (provider.userPosition != null)
+                                MarkerLayer(
+                                  markers: [
+                                    Marker(
+                                      point: provider.userPosition!,
+                                      width: 50,
+                                      height: 50,
+                                      child: const Icon(
+                                        Icons.phone_android_outlined,
+                                        color: Colors.blue,
                                         size: 36,
                                       ),
-                                      const SizedBox( //sized box para separarlo un poco del dron
-                                        height: 20,
-                                      ), 
-                                    ],
-                                  ),
+                                    ),
+                                  ],
                                 ),
-                              ),
                             ],
                           ),
+
+                          if (provider.userPosition != null)
+                            Positioned(
+                              bottom: 12,
+                              left: 12,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: Colors.black54,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Icon(Icons.gps_fixed, color: _gpsColor(provider.gpsAccuracy), size: 14),
+                                    const SizedBox(width: 6),
+                                    Text(
+                                      'GPS: ${provider.gpsAccuracy.toStringAsFixed(1)} m',
+                                      style: TextStyle(
+                                        color: _gpsColor(provider.gpsAccuracy),
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
                         ],
                       ),
                     ),
                   ),
                 ),
+
 
 
                 // ZONA DER. (por ahora flechas, cambiar a joystick)
@@ -416,6 +477,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                 const SizedBox(width: 8),
 
 
+
                 // BOTÓN TAKEOFF
                 Expanded(
                   child: ElevatedButton.icon(
@@ -445,6 +507,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                   ),
                 ),
                 const SizedBox(width: 8),
+
 
 
                 // BOTÓN DISCONNECT
@@ -482,6 +545,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                 const SizedBox(width: 8),
 
 
+
                 // BOTÓN LAND
                 Expanded(
                   child: ElevatedButton.icon(
@@ -510,6 +574,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                   ),
                 ),
                 const SizedBox(width: 8),
+
 
 
                 // BOTÓN RTL
@@ -549,6 +614,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
 }
 
 
+
 Widget _buildTopTelemetry(IconData icon, String label, String value) { //función para facilitar el display de la telem.
   return Column(
     crossAxisAlignment: CrossAxisAlignment.start,
@@ -578,11 +644,20 @@ Widget _buildTopTelemetry(IconData icon, String label, String value) { //funció
   );
 }
 
+// ← NUEVO: helper color badge GPS
+Color _gpsColor(double accuracy) {
+  if (accuracy <= 5) return Colors.green;
+  if (accuracy <= 20) return Colors.orange;
+  return Colors.red;
+}
+
+
 
 class ContinuousButton extends StatefulWidget {   //statefull widget de los botones 
   final IconData icon;
   final String direction;
   final bool isEnabled;
+
 
 
   const ContinuousButton({
@@ -593,13 +668,16 @@ class ContinuousButton extends StatefulWidget {   //statefull widget de los boto
   });
 
 
+
   @override
   State<ContinuousButton> createState() => _ContinuousButtonState();
 }
 
 
+
 class _ContinuousButtonState extends State<ContinuousButton> {
   bool _isPressed = false;
+
 
 
   void _handlePressDown(_) {        //cuando está apretado =move
@@ -609,11 +687,13 @@ class _ContinuousButtonState extends State<ContinuousButton> {
   }
 
 
+
   void _handlePressUp(_) {          //cuando se suelta = stop
     if (!widget.isEnabled) return;
     setState(() => _isPressed = false);
     context.read<DronProvider>().stopMove();
   }
+
 
 
   @override
@@ -654,6 +734,7 @@ class _ContinuousButtonState extends State<ContinuousButton> {
     );
   }
 }
+
 
 
 LatLng _calcVelocityEndPoint(double lat, double lon, double vx, double vy) {
