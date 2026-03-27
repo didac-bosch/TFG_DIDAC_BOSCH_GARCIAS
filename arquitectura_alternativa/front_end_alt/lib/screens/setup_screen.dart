@@ -5,155 +5,159 @@ import '../core/styles.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'flight_screen.dart';
 
-
-
-class SetupScreen extends StatelessWidget {             //stateless widget con un provider para evitar sobreuso de statefull, 
-                                                        //provider reconstruye lo justo y necesario 
+class SetupScreen extends StatelessWidget {
   const SetupScreen({super.key});
-
-
 
   @override
   Widget build(BuildContext context) {
-    final provider = context.watch<DronProvider>();       //suscripción de widget al provider para que se actualice con los notify
+    final provider = context.watch<DronProvider>();
+    final screenW = MediaQuery.of(context).size.width;
+    final screenH = MediaQuery.of(context).size.height;
 
-
-
-    //pantalla
     return Scaffold(
       backgroundColor: AppColors.background,
-      //appBar
       appBar: AppBar(
-        title: const Text('EZDRONE', style: TextStyles.title),   //CAMBIAR A TITULO CORRESPONDIENTE SI NO ME DECIDO POR ESTE
+        title: const Text('EZDRONE', style: TextStyles.title),
         backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         centerTitle: true,
+        toolbarHeight: screenH * 0.06,
       ),
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 32.0, vertical: 24.0),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
+      body: SafeArea(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            SizedBox(height: screenH * 0.04),
 
+            // LOGO
+            FaIcon(
+              FontAwesomeIcons.helicopterSymbol,
+              size: screenW * 0.2,
+              color: provider.isConnected
+                  ? AppColors.primary
+                  : AppColors.textSecondary,
+            ),
 
+            SizedBox(height: screenH * 0.03),
 
-              const Spacer(),
-
-
-
-              // LOGO.    si se hace uno en un futuro cambiar
-              FaIcon(
-                FontAwesomeIcons.helicopterSymbol,    //librería FontAwesome para mas icons
-                size: 128,
-                color: provider.isConnected
-                    ? AppColors.primary
-                    : AppColors.textSecondary,
-              ),
-
-
-
-              const SizedBox(height: 32),
-
-
-
-              // MENSAJE DE ESTADO
-              Text(
-                provider.message,                 //mensaje guardado en provider según la situación
-                textAlign: TextAlign.center,
-                style: TextStyles.status,
-              ),
-
-
-
-              const SizedBox(height: 32),
-
-
-
-              // LOADING
-              if (provider.isLoading)
-                const CircularProgressIndicator(color: AppColors.primary),
-
-
-
-              const Spacer(),
-
-
-              // CAMPOS DE CONFIGURACIÓN (Altitud y Velocidad)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    // ALTITUD
-                    SizedBox(
-                      width: 110,
-                      child: TextFormField(
-                        initialValue: provider.takeoffAltitude.toString(),
-                        keyboardType: TextInputType.number,
-                        style: const TextStyle(color: AppColors.textPrimary),
-                        decoration: InputDecoration(
-                          labelText: 'Alt (m)',
-                          helperText: '2.0 - 50.0',
-                          helperStyle: TextStyle(
-                            color: provider.isConfigValid ? AppColors.textSecondary : AppColors.danger,  
-                            fontSize: 10    //si no está dentro del rando poner en rojo
-                          ),
-                          labelStyle: const TextStyle(color: AppColors.textSecondary),
-                          enabledBorder: const UnderlineInputBorder(
-                            borderSide: BorderSide(color: AppColors.textSecondary),
-                          ),
-                          focusedBorder: UnderlineInputBorder(
-                            borderSide: BorderSide(
-                              color: provider.isConfigValid ? AppColors.primary : AppColors.danger
-                            ),
-                          ),
-                        ),
-                        onChanged: (value) => context.read<DronProvider>().setAltitude(value), //si se cambia ajustar altitud en el provider
-                      ),
-                    ),
-                    
-                    // VELOCIDAD, igual que la altitud
-                    SizedBox(
-                      width: 110,
-                      child: TextFormField(
-                        initialValue: provider.flightSpeed.toString(),
-                        keyboardType: TextInputType.number,
-                        style: const TextStyle(color: AppColors.textPrimary),
-                        decoration: InputDecoration(
-                          labelText: 'Speed (m/s)',
-                          helperText: '1.0 - 15.0',
-                          helperStyle: TextStyle(
-                            color: provider.isConfigValid ? AppColors.textSecondary : AppColors.danger, 
-                            fontSize: 10
-                          ),
-                          labelStyle: const TextStyle(color: AppColors.textSecondary),
-                          enabledBorder: const UnderlineInputBorder(
-                            borderSide: BorderSide(color: AppColors.textSecondary),
-                          ),
-                          focusedBorder: UnderlineInputBorder(
-                            borderSide: BorderSide(
-                              color: provider.isConfigValid ? AppColors.primary : AppColors.danger
-                            ),
-                          ),
-                        ),
-                        onChanged: (value) => context.read<DronProvider>().setSpeed(value),
-                      ),
-                    ),
-                  ],
+            // MENSAJE DE ESTADO
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+              child: Container(
+                width: double.infinity,
+                padding: EdgeInsets.symmetric(
+                  horizontal: screenW * 0.04,
+                  vertical: screenH * 0.015,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.surface,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.disabled),
+                ),
+                child: Text(
+                  provider.message,
+                  textAlign: TextAlign.center,
+                  style: TextStyles.status,
                 ),
               ),
+            ),
 
+            SizedBox(height: screenH * 0.015),
 
-              const SizedBox(height: 64),
+            if (provider.isLoading)
+              const CircularProgressIndicator(color: AppColors.primary),
 
+            SizedBox(height: screenH * 0.04),
 
-              // BOTÓN CONNECT
-              SizedBox(
-                width: 260,
-                height: 55,
+            // CAMPOS DE CONFIGURACIÓN
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  SizedBox(
+                    width: screenW * 0.3,
+                    child: TextFormField(
+                      initialValue: provider.takeoffAltitude.toString(),
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        labelText: 'Alt (m)',
+                        helperText: '2.0 - 50.0',
+                        helperStyle: TextStyle(
+                          color: provider.isConfigValid
+                              ? AppColors.textSecondary
+                              : AppColors.danger,
+                          fontSize: 10,
+                        ),
+                        labelStyle: const TextStyle(
+                          color: AppColors.textSecondary,
+                        ),
+                        enabledBorder: const UnderlineInputBorder(
+                          borderSide: BorderSide(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(
+                            color: provider.isConfigValid
+                                ? AppColors.primary
+                                : AppColors.danger,
+                          ),
+                        ),
+                      ),
+                      onChanged: (value) =>
+                          context.read<DronProvider>().setAltitude(value),
+                    ),
+                  ),
+                  SizedBox(
+                    width: screenW * 0.3,
+                    child: TextFormField(
+                      initialValue: provider.flightSpeed.toString(),
+                      keyboardType: TextInputType.number,
+                      style: const TextStyle(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        labelText: 'Speed (m/s)',
+                        helperText: '1.0 - 15.0',
+                        helperStyle: TextStyle(
+                          color: provider.isConfigValid
+                              ? AppColors.textSecondary
+                              : AppColors.danger,
+                          fontSize: 10,
+                        ),
+                        labelStyle: const TextStyle(
+                          color: AppColors.textSecondary,
+                        ),
+                        enabledBorder: const UnderlineInputBorder(
+                          borderSide: BorderSide(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                        focusedBorder: UnderlineInputBorder(
+                          borderSide: BorderSide(
+                            color: provider.isConfigValid
+                                ? AppColors.primary
+                                : AppColors.danger,
+                          ),
+                        ),
+                      ),
+                      onChanged: (value) =>
+                          context.read<DronProvider>().setSpeed(value),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+            SizedBox(height: screenH * 0.04),
+
+            // BOTÓN CONNECT
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+              child: SizedBox(
+                width: double.infinity,
+                height: screenH * 0.07,
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.link),
                   label: const Text('CONNECT', style: TextStyles.button),
@@ -168,26 +172,27 @@ class SetupScreen extends StatelessWidget {             //stateless widget con u
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: provider.isLoading || provider.isConnected         //acción elevated button, si está cargando o ya está conectado no tiene sentido volver a conectar
+                  onPressed: provider.isLoading || provider.isConnected
                       ? null
-                      : () => context.read<DronProvider>().connectDron(),     //sino, se conecta, usando read en lugar de watch porque no es necesario suscribirse
-                      //en un onpressed de un widget nunca watch ya que flutter no lo permite!
+                      : () => context.read<DronProvider>().connectDron(),
                 ),
               ),
+            ),
 
+            SizedBox(height: screenH * 0.02),
 
-              const SizedBox(height: 16),
-
-
-              // BOTÓN START FLIGHT
-              SizedBox(
-                width: 260,
-                height: 55,
+            // BOTÓN START FLIGHT
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+              child: SizedBox(
+                width: double.infinity,
+                height: screenH * 0.07,
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.flight_takeoff),
                   label: const Text('START FLIGHT', style: TextStyles.button),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: (provider.isConnected && provider.isConfigValid) //si la config. no es valida, no se puede iniciar el vuelo
+                    backgroundColor:
+                        (provider.isConnected && provider.isConfigValid)
                         ? AppColors.primary
                         : AppColors.disabled,
                     disabledBackgroundColor: AppColors.disabled,
@@ -205,16 +210,16 @@ class SetupScreen extends StatelessWidget {             //stateless widget con u
                           ),
                 ),
               ),
+            ),
 
+            SizedBox(height: screenH * 0.02),
 
-              const Spacer(),
-
-
-
-              // BOTÓN DISCONNECT
-              SizedBox(
-                width: 200,
-                height: 44,
+            // BOTÓN DISCONNECT
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+              child: SizedBox(
+                width: double.infinity,
+                height: screenH * 0.06,
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.link_off, size: 18),
                   label: const Text('DISCONNECT', style: TextStyles.button),
@@ -227,20 +232,13 @@ class SetupScreen extends StatelessWidget {             //stateless widget con u
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: provider.isLoading || !provider.isConnected          //según estado se desconecta
+                  onPressed: provider.isLoading || !provider.isConnected
                       ? null
                       : () => context.read<DronProvider>().disconnectDron(),
                 ),
               ),
-
-
-
-              const SizedBox(height: 24),
-
-
-
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

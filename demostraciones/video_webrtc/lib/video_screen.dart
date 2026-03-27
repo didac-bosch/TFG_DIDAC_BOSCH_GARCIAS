@@ -19,8 +19,8 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 // ============================================================
 
 
-// Cambia esta IP por la IP local del portátil que corre sender.py
-const String senderIP = '172.20.10.4';
+// Cambiar esta IP por la IP local del portátil que corre sender.py
+const String senderIP = '192.168.1.124';
 const int senderPort = 9999;
 
 
@@ -128,7 +128,7 @@ class _VideoScreenState extends State<VideoScreen> {
     }));
 
 
-    setState(() => _status = 'Answer enviado, esperando stream...');
+    setState(() => _status = '');
   }
 
 

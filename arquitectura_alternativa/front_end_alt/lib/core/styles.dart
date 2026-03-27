@@ -1,6 +1,15 @@
 
 import 'package:flutter/material.dart';
 
+// ============================================================
+// ESTILOS Y COLORES DE LA APP
+//
+// Define la paleta de colores (fondo oscuro, verde para estados
+// positivos, naranja para advertencias, rojo para peligro) y los
+// estilos de texto reutilizables. 
+// ============================================================
+
+
 class AppColors {
   //COLORES
   static const Color background    = Color(0xFF1E1E2E);

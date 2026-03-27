@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:speech_to_text/speech_to_text.dart';
 import 'package:speech_to_text/speech_recognition_result.dart';
 
+
 // ============================================================
 // DEMO: CONTROL DE DRON POR VOZ CON WAKE WORD
 // ============================================================
@@ -32,9 +33,6 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 //   5. "dron" + comando detectado → ejecuta al instante,
 //      se queda encendido indefinidamente hasta stop manual
 //
-// NOTA: detección instantánea via resultados parciales,
-//       sin esperar a que el motor pare.
-//
 // ESTADOS:
 //   idle            → apagado
 //   waitingWakeWord → escuchando, timer activo, esperando "dron"
@@ -54,7 +52,9 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 //   "volver a despegue"→ VOLVER A DESPEGUE
 // ============================================================
 
+
 void main() => runApp(const MyApp());
+
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -68,6 +68,7 @@ class MyApp extends StatelessWidget {
   }
 }
 
+
 // Máquina de estados del sistema de escucha. Define en qué fase está la app en cada momento:
 //   idle            → apagado, no escucha nada
 //   waitingWakeWord → escuchando, esperando que el usuario diga "dron"
@@ -75,14 +76,17 @@ class MyApp extends StatelessWidget {
 //   commandLocked   → comando ejecutado, sigue escuchando indefinidamente
 enum ListenState { idle, waitingWakeWord, waitingCommand, commandLocked }
 
+
 class VoiceControlScreen extends StatefulWidget {
   const VoiceControlScreen({super.key});
   @override
   State<VoiceControlScreen> createState() => _VoiceControlScreenState();
 }
 
+
 class _VoiceControlScreenState extends State<VoiceControlScreen> {
   final SpeechToText _speech = SpeechToText();
+
 
   bool _isAvailable = false;                    // Si el dispositivo soporta reconocimiento de voz
   ListenState _listenState = ListenState.idle;  // Estado actual de la máquina de estados
@@ -91,8 +95,10 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
   IconData _commandIcon = Icons.mic_none;       // Icono asociado al comando actual
   Color _commandColor = Colors.white;           // Color asociado al comando actual
 
+
   Timer? _autoOffTimer; //timer para pararse solo si en 10s no se ha dicho nada
   static const _autoOffSeconds = 10;
+
 
   @override
   void initState() {
@@ -100,11 +106,13 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     _initSpeech();
   }
 
+
   @override
   void dispose() {
     _autoOffTimer?.cancel();
     super.dispose();
   }
+
 
   Future<void> _initSpeech() async {    //inicia el motor de reconocimiento de voz, si ha habido error reintenta la escucha
     _isAvailable = await _speech.initialize(
@@ -123,6 +131,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     setState(() {});
   }
 
+
   void _startAutoOffTimer() { //timer para auto parar
     _autoOffTimer?.cancel();
     _autoOffTimer = Timer(const Duration(seconds: _autoOffSeconds), () {
@@ -130,16 +139,19 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     });
   }
 
+
   void _resetAutoOffTimer() {  //resetear el contador cada vez que se escucha algo
     if (_listenState != ListenState.commandLocked) {
       _startAutoOffTimer();
     }
   }
 
+
   void _cancelAutoOffTimer() {  //anular timer si se pulsa manualmente
     _autoOffTimer?.cancel();
     _autoOffTimer = null;
   }
+
 
   void _toggleListening() {         //toggle del botón principal, para encender o apagar todo
     if (_listenState != ListenState.idle) {
@@ -148,6 +160,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
       _startWakeWordMode();
     }
   }
+
 
   void _startWakeWordMode() {   //inicio de escucha y espera a la wakeword
     setState(() {
@@ -161,6 +174,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     _listenLoop();
   }
 
+
   void _stopEverything() {    //final de todo
     _cancelAutoOffTimer();
     _speech.stop();
@@ -173,27 +187,34 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     });
   }
 
+
   void _listenLoop() {      //bucle de escucha
     if (_listenState == ListenState.idle) return;
+    if (_speech.isListening) return;  // evita doble reinicio si onStatus y onError llegan a la vez
     _speech.listen(
       onResult: _onResult,
       localeId: 'es_ES',
       listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 2),
+      pauseFor: const Duration(seconds: 4),  // era 2s, aumentado para no cortar entre palabras
     );
   }
+
 
   void _onResult(SpeechRecognitionResult result) {
     final text = result.recognizedWords.toLowerCase();
     setState(() => _rawText = result.recognizedWords);  //mostrar texto cada vez que se detecta algo
 
+
     if (text.isEmpty) return;
+
 
     // Cualquier voz detectada resetea el timer de silencio
     _resetAutoOffTimer();
 
+
     _processTextPartial(text);
   }
+
 
   void _processTextPartial(String text) { //según el estado espera una palabra o la otra
     switch (_listenState) {
@@ -211,13 +232,16 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     }
   }
 
+
   void _handleWakeWordPartial(String text) {    //lógica de escucha. Si escucha dron se pone en waiting command. Y a la que escucha dron + comando ejecuta el comando
     final hasDron = text.contains('dron') || text.contains('drone');
     if (!hasDron) return;
 
+
     final afterDron = text.contains('drone')  //palabra después de dron
         ? text.split('drone').last.trim()
         : text.split('dron').last.trim();
+
 
     if (afterDron.isNotEmpty && _hasValidCommand(afterDron)) {
       // "dron armar"  ejecutar al instante y bloquear encendido
@@ -237,8 +261,10 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     }
   }
 
+
   void _handleCommandPartial(String text) { //si solo se ha dicho dron se activa modo waiting
     if (!_hasValidCommand(text)) return;
+
 
     // Comando detectado ejecutar al instante y bloquear encendido
     _speech.stop();
@@ -247,6 +273,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     _identifyCommand(text);
     Future.delayed(const Duration(milliseconds: 500), _listenLoop);
   }
+
 
   bool _hasValidCommand(String text) {  //commandos válidos
     return text.contains('armar') ||
@@ -262,6 +289,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
            text.contains('volver a despegue') ||
            text.contains('volver al despegue');
   }
+
 
   void _identifyCommand(String text) {    //identificadores comandos
     if (text.contains('armar')) {
@@ -290,6 +318,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     }
   }
 
+
   void _setCommand(String command, IconData icon, Color color) {  //actualizador de pantalla
     setState(() {
       _command = command;
@@ -297,6 +326,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
       _commandColor = color;
     });
   }
+
 
   String get _statusText {  //texto que aparece debajo del botón
     switch (_listenState) {
@@ -311,6 +341,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     }
   }
 
+
   Color get _buttonColor {  //color según estado
     switch (_listenState) {
       case ListenState.idle:
@@ -324,8 +355,10 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     }
   }
 
+
   bool get _hasCommand =>
       _command.isNotEmpty && _command != 'No reconocido';
+
 
   @override
   Widget build(BuildContext context) {
@@ -333,12 +366,14 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
     final bool waitingCmd =
         _listenState == ListenState.waitingCommand && _command.isEmpty;
 
+
     return Scaffold(  //pantalla
       appBar: AppBar(title: const Text('Control por voz')),
       body: Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+
 
             // Recuadro de comando: muestra el icono y nombre del comando detectado.
             AnimatedContainer(
@@ -389,7 +424,9 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
               ),
             ),
 
+
             const SizedBox(height: 20),
+
 
             //texto que se detecta
             Text(
@@ -397,7 +434,9 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
               style: const TextStyle(fontSize: 14, color: Colors.grey),
             ),
 
+
             const SizedBox(height: 48),
+
 
             //botón microfono
             GestureDetector(
@@ -425,6 +464,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
               ),
             ),
             const SizedBox(height: 20),
+
 
             Text(_statusText, style: const TextStyle(color: Colors.grey)),
           ],

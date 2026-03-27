@@ -1,18 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'provider.dart';
 import 'screens/setup_screen.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  
+  // PREVENIR pantalla completa — forzar modo normal
+  SystemChrome.setEnabledSystemUIMode(
+    SystemUiMode.manual,
+    overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],
+  );
+
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => DronProvider()),    //Provider
+        ChangeNotifierProvider(create: (_) => DronProvider()),
       ],
       child: const MaterialApp(
-        debugShowCheckedModeBanner: false,     //Para que no salga la línea roja de debug
-        title: 'TFG Frontend',
-        home: SetupScreen(),   //Pantalla inicio
+        debugShowCheckedModeBanner: false,
+        title: 'EZDrone',
+        home: SetupScreen(),
       ),
     ),
   );
