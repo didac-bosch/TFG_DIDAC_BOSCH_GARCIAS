@@ -1,111 +1,157 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-const String _myId     = 'browser'; //flutter
-const String _remoteId = 'python';  //destinatario
 
-class WebRTCLogic {   
+
+const String _myId = 'browser';     //IDs para el handshake webrtc
+const String _remoteId = 'python';
+
+class WebRTCLogic {          
   RTCPeerConnection? _pc;
   WebSocketChannel? _ws;
   RTCDataChannel? _joystickChannel;
   RTCDataChannel? _telemetryChannel;
 
-  // Callbacks
   Function(MediaStream)? onRemoteStream;
-  Function(String)? onTelemetry;  
+  Function(String)? onTelemetry;
+
+  final List<Map<String, dynamic>> _msgQueue = [];
+  bool _pcReady = false;
 
   Future<void> connect(String signalingUrl) async {
     _ws = WebSocketChannel.connect(Uri.parse(signalingUrl));
-    _ws!.sink.add(_myId);   //registro primer peer
+    _ws!.sink.add(_myId);
 
-    final config = {
-      'iceServers': [
-        {'urls': 'stun:stun.l.google.com:19302'},     //convertir a servidor TURN???
-      ],
-    };
+    final iceCompleter = Completer<Map<String, dynamic>>();
 
-    _pc = await createPeerConnection(config);   
+    // Único listener para todos los mensajes
+    _ws!.stream.listen((message) async {
+      final data = jsonDecode(message as String) as Map<String, dynamic>;
 
-    _pc!.onTrack = (event) {        //empieza a escuchar stream de video
-      if (event.streams.isNotEmpty) {
-        onRemoteStream?.call(event.streams[0]);
+      // ice_config llega primero, crea la PeerConnection
+      if (data['type'] == 'ice_config') {
+        if (!iceCompleter.isCompleted) {
+          iceCompleter.complete({'iceServers': data['iceServers']});
+        }
+        return;
       }
+      if (!_pcReady) {
+        _msgQueue.add(data);
+        return;
+      }
+
+      await _handleSignaling(data);
+    });
+
+    // Esperar ice_config, 3s timeout con fallback a Google STUN
+    final config = await iceCompleter.future.timeout(
+      const Duration(seconds: 3),
+      onTimeout: () => {
+        'iceServers': [
+          {'urls': 'stun:stun.l.google.com:19302'},
+        ],
+      },
+    );
+
+    await _setupPC(config);
+
+    // Procesar mensajes que llegan mientras se espera 
+    for (final msg in List.of(_msgQueue)) {
+      await _handleSignaling(msg);
+    }
+    _msgQueue.clear();
+  }
+
+  Future<void> _setupPC(Map<String, dynamic> config) async {     
+    _pc = await createPeerConnection(config);
+
+    _pc!.onTrack = (event) {    //video track
+      if (event.streams.isNotEmpty) onRemoteStream?.call(event.streams[0]);
     };
 
-    // Separar DataChannels por label
-    _pc!.onDataChannel = (channel) {    //empiesza aescuchar los datachannels
+    _pc!.onDataChannel = (channel) {      //Data channels de telemetría y para el joystick
       if (channel.label == 'joystick') {
         _joystickChannel = channel;
       } else if (channel.label == 'telemetry') {
         _telemetryChannel = channel;
         _telemetryChannel!.onMessage = (RTCDataChannelMessage message) {
-          onTelemetry?.call(message.text);
+          onTelemetry?.call(message.text);  
         };
       }
     };
 
-    _pc!.onIceCandidate = (candidate) {           //envío de ICEcandidates
+    _pc!.onIceCandidate = (candidate) {
       if (candidate.candidate == null) return;
-      _ws!.sink.add(jsonEncode({
-        'target': _remoteId,
-        'type':   'candidate',
-        'candidate': {
-          'candidate':     candidate.candidate,
-          'sdpMid':        candidate.sdpMid,
-          'sdpMLineIndex': candidate.sdpMLineIndex,
-        },
-      }));
+      _ws!.sink.add(
+        jsonEncode({
+          'target': _remoteId,
+          'type': 'candidate',
+          'candidate': {
+            'candidate': candidate.candidate,
+            'sdpMid': candidate.sdpMid,
+            'sdpMLineIndex': candidate.sdpMLineIndex,
+          },
+        }),
+      );
     };
 
-    _ws!.stream.listen((message) async {      //mensajes del ws para añadire ICEcandidate o procesar offer
-      final data = jsonDecode(message as String) as Map;
+    _pcReady = true;  //listo para procesar mensajes
+  }
 
-      if (data['type'] == 'offer') {      
-        final offer = data['offer'] as Map;
-        await _pc!.setRemoteDescription(
-          RTCSessionDescription(offer['sdp'], offer['type']),
-        );
-        final answer = await _pc!.createAnswer();
-        await _pc!.setLocalDescription(answer);
-        _ws!.sink.add(jsonEncode({
+  Future<void> _handleSignaling(Map<String, dynamic> data) async {    //flutter recibe la offer de la ET y envía la answer para el signaling 
+    if (data['type'] == 'offer') {
+      final offer = data['offer'] as Map;
+      await _pc!.setRemoteDescription(
+        RTCSessionDescription(offer['sdp'], offer['type']),
+      );
+      final answer = await _pc!.createAnswer();
+      await _pc!.setLocalDescription(answer);
+      _ws!.sink.add(
+        jsonEncode({
           'target': _remoteId,
-          'type':   'answer',
-          'answer': {
-            'sdp':  answer.sdp,
-            'type': answer.type,
-          },
-        }));
-      }
+          'type': 'answer',
+          'answer': {'sdp': answer.sdp, 'type': answer.type},
+        }),
+      );
+    }
 
-      if (data['type'] == 'candidate') {
-        final cand = data['candidate'] as Map?;
-        if (cand == null) return;
-        await _pc!.addCandidate(RTCIceCandidate(
-          cand['candidate'],
-          cand['sdpMid'],
-          cand['sdpMLineIndex'],
-        ));
+    if (data['type'] == 'candidate') {
+      final cand = data['candidate'] as Map?;
+      if (cand == null) return;
+      try {
+        await _pc!.addCandidate(
+          RTCIceCandidate(
+            cand['candidate'],
+            cand['sdpMid'],
+            cand['sdpMLineIndex'],
+          ),
+        );
+      } catch (_) {
       }
-    });
+    }
   }
 
-  void sendJoystick(double lx, double ly, double rx, double ry) {   //joysticks
+  void sendJoystick(double lx, double ly, double rx, double ry) {   //Se convierten los 4 ejes como JSON y se envían por el DataChannel 
     if (_joystickChannel == null) return;
-    if (_joystickChannel!.state != RTCDataChannelState.RTCDataChannelOpen) return;
-    _joystickChannel!.send(RTCDataChannelMessage(jsonEncode({
-      'lx': lx,
-      'ly': ly,
-      'rx': rx,
-      'ry': ry,
-    })));
+    if (_joystickChannel!.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    _joystickChannel!.send(
+      RTCDataChannelMessage(
+        jsonEncode({'lx': lx, 'ly': ly, 'rx': rx, 'ry': ry}),
+      ),
+    );
   }
 
-  Future<void> disconnect() async { //desconexión
+  Future<void> disconnect() async {
+    _pcReady = false;
+    _msgQueue.clear();
     await _pc?.close();
     await _ws?.sink.close();
-    _pc              = null;
-    _ws              = null;
+    _pc = null;
+    _ws = null;
     _joystickChannel = null;
     _telemetryChannel = null;
   }

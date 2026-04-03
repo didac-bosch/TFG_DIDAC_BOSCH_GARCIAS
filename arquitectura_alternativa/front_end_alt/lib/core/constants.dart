@@ -1,20 +1,8 @@
-// ============================================================
-// CONSTANTES GLOBALES
-//
-// Centraliza la dirección del broker MQTT, todos los topics
-// usados en la comunicación y la URL de señalización WebRTC.
-// Separados en tres grupos:
-//   - mobileFlutter/groundStation/... órdenes que envía Flutter
-//   - groundStation/mobileFlutter/... respuestas que recibe Flutter
-//   - WebRTC: URL de señalización hacia el backend (relay)
-// ============================================================
-
 class Constants {
-  static const String broker = 'broker.hivemq.com';
+  static const String broker = 'broker.hivemq.com';     //cambiar a broker UPC???
   static const int port = 8884;
 
-  // URL de señalización WebRTC — el backend hace relay entre Flutter y la estación tierra
-  // Cambiar IP por la del portátil que corre el servidor Dart
+  // URL de señalización WebRTC (para hacer el handshake con la estación tierra)
   static const String webrtcSignalUrl = 'wss://dronseetac.upc.edu:8104/ws';   
 
   // Topics publicar
@@ -34,3 +22,4 @@ class Constants {
   static const String topicLanded       = 'groundStation/mobileFlutter/landed';
   static const String topicDisconnected = 'groundStation/mobileFlutter/disconnected';
 }
+

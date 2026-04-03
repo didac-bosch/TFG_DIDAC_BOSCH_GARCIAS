@@ -7,16 +7,128 @@
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <title>EZDRONE</title>
+
+  <script>
+    // ------- IMU bridge — DeviceOrientationEvent ----------
+    var _alpha = 0, _beta = 0, _gamma = 0;
+
+    function requestMotionPermission() {
+      if (typeof DeviceOrientationEvent !== 'undefined' &&
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        DeviceOrientationEvent.requestPermission()
+          .then(function(result) {
+            if (result === 'granted') {
+              window.addEventListener('deviceorientation', handleOrientation);
+            }
+          });
+      } else {
+        window.addEventListener('deviceorientation', handleOrientation);
+      }
+    }
+
+    function handleOrientation(event) {
+      _alpha = event.alpha || 0;
+      _beta  = event.beta  || 0;
+      _gamma = event.gamma || 0;
+    }
+
+    function getAlpha() { return _alpha; }
+    function getBeta()  { return _beta;  }
+    function getGamma() { return _gamma; }
+
+    function stopOrientation() {
+      window.removeEventListener('deviceorientation', handleOrientation);
+    }
+
+
+    // ------------ Captura y grabación del stream WebRTC ---------------
+    let _droneRecorder = null;
+    let _droneChunks   = [];
+
+    window.captureDroneFrame = function(filename) {
+      const video = document.querySelector('video');
+      if (!video) { console.warn('captureDroneFrame: no hay elemento video'); return; }
+      const canvas = document.createElement('canvas');
+      canvas.width  = video.videoWidth  || 640;
+      canvas.height = video.videoHeight || 480;
+      canvas.getContext('2d').drawImage(video, 0, 0);
+      const a = document.createElement('a');
+      a.href     = canvas.toDataURL('image/png');
+      a.download = filename;
+      a.click();
+    };
+
+    window.startDroneRecording = function() {
+      const video = document.querySelector('video');
+      if (!video) { console.warn('startDroneRecording: no hay elemento video'); return; }
+      const stream = video.captureStream
+        ? video.captureStream(30)
+        : video.mozCaptureStream(30);
+      _droneChunks   = [];
+      _droneRecorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+      _droneRecorder.ondataavailable = e => {
+        if (e.data.size > 0) _droneChunks.push(e.data);
+      };
+      _droneRecorder.start(100);
+    };
+
+    window.stopDroneRecording = function(filename) {
+      if (!_droneRecorder) { console.warn('stopDroneRecording: no hay grabación activa'); return; }
+      _droneRecorder.onstop = () => {
+        const blob = new Blob(_droneChunks, { type: 'video/webm' });
+        const url  = URL.createObjectURL(blob);
+        const a    = document.createElement('a');
+        a.href     = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+      _droneRecorder.stop();
+    };
+
+
+    // ------------------ Fullscreen -------------
+    window.requestFullscreenEZ = function() {
+      // Excluir iPhone (iOS Safari no soporta fullscreen API)
+      if (/iPhone|iPad/i.test(navigator.userAgent)) return;
+      const el = document.documentElement;
+      const fn = el.requestFullscreen
+               || el.webkitRequestFullscreen
+               || el.mozRequestFullScreen
+               || el.msRequestFullscreen;
+      if (fn) fn.call(el).catch(function() {});
+    };
+
+    window.exitFullscreenEZ = function() {
+      const el = document.fullscreenElement
+               || document.webkitFullscreenElement
+               || document.mozFullScreenElement
+               || document.msFullscreenElement;
+      if (!el) return; // ya no está en fullscreen, no hacer nada
+      const fn = document.exitFullscreen
+               || document.webkitExitFullscreen
+               || document.mozCancelFullScreen
+               || document.msExitFullscreen;
+      if (fn) fn.call(document).catch(function() {});
+    };
+
+    // --------- Orientation lock helper ------------------
+    // orientation: 'portrait', 'landscape',
+    window.lockOrientationEZ = function(orientation) {
+      if (screen.orientation && typeof screen.orientation.lock === 'function') {
+        screen.orientation.lock(orientation).catch(function() {});
+      }
+    };
+
+    window.unlockOrientationEZ = function() {
+      if (screen.orientation && typeof screen.orientation.unlock === 'function') {
+        try { screen.orientation.unlock(); } catch(e) {}
+      }
+    };
+
+  </script>
 </head>
 <body>
-  <script>
-    // Desregistra cualquier service worker existente
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.getRegistrations().then(
-        regs => regs.forEach(r => r.unregister())
-      );
-    }
-  </script>
   <script src="flutter_bootstrap.js" async></script>
 </body>
 </html>

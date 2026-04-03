@@ -2,15 +2,15 @@ import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_browser_client.dart';
 import 'dart:math';
 
-// ============================================================
+
 // CAPA DE COMUNICACIÓN MQTT
-//
+
 // Wrapper sobre MqttBrowserClient para conectar al broker HiveMQ.
 // Usa WebSocket seguro (wss, puerto 8884) porque la app corre en el navegador
 // y una página HTTPS no puede abrir conexiones ws:// no seguras.
 // Expone tres operaciones: connect, subscribe y publish. Los mensajes entrantes se entregan al
 // provider mediante un callback (onMessageReceived).
-// ============================================================
+
 
 class MqttLogic {
   late MqttBrowserClient _client;

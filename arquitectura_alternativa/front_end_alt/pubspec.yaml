@@ -17,6 +17,8 @@ dependencies:
   latlong2: ^0.9.1
   mqtt_client: ^10.11.9
   provider: ^6.1.5+1
+  speech_to_text: ^7.3.0
+  web: ^1.1.1
   web_socket_channel: ^3.0.3
 
 dev_dependencies:

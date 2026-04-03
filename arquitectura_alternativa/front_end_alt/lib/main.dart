@@ -7,7 +7,6 @@ import 'screens/setup_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   
-  // PREVENIR pantalla completa — forzar modo normal
   SystemChrome.setEnabledSystemUIMode(
     SystemUiMode.manual,
     overlays: [SystemUiOverlay.top, SystemUiOverlay.bottom],

@@ -4,35 +4,51 @@ import 'data/webrtc.dart';
 import 'core/constants.dart';
 import 'dart:async';
 import 'dart:convert';
+import 'dart:js_interop';                     
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:geolocator/geolocator.dart';
 
-// ============================================================
-// GESTOR DE ESTADO CENTRAL — DronProvider
-//
-// Gestiona el estado del dron, la telemetría en tiempo real
-// y la configuración de vuelo. Todas las órdenes al dron
-// pasan por aquí. Coordina dos canales de comunicación:
-//   - MQTT: comandos críticos (arm, takeoff, land, rtl...)
-//   - WebRTC: joystick a ~20Hz + stream de vídeo
-// ============================================================
+
+// Llamada a funciones JavaScript declaradas en el index.html relacionadas con la captura de pantalla 
+@JS('captureDroneFrame')
+external void _jsCapture(String filename);
+
+@JS('startDroneRecording')
+external void _jsStartRecording();
+
+@JS('stopDroneRecording')
+external void _jsStopRecording(String filename);
+
+
+// Modos de control 
+enum ControlMode { classic, voice, imu }
+
+// Modos de detección YOLO — sincronizados con ET via MQTT
+enum DetectionMode { all, person, none }
+
 
 class DronProvider extends ChangeNotifier {
-  final MqttLogic _mqtt = MqttLogic();
-  final WebRTCLogic _webrtc = WebRTCLogic();
+  final MqttLogic _mqtt = MqttLogic();  //gestión conexión mqtt
+  final WebRTCLogic _webrtc = WebRTCLogic();  //gestión conexión webRTC
 
-  // Estado inicial
+  //estados de conexión y vuelo
   bool isLoading = false;
   String message = 'Please connect to a drone';
   bool isConnected = false;
   bool isArmed = false;
   bool isFlying = false;
 
-  // Setup inicial
   double takeoffAltitude = 10.0;
   double flightSpeed = 5.0;
   bool isConfigValid = true;
+
+  ControlMode selectedMode = ControlMode.classic; //selección por defecto
+
+  void setControlMode(ControlMode mode) {
+    selectedMode = mode;
+    notifyListeners();  //notify para refrescar la pantalla 
+  }
 
   // Telemetría
   double currentAlt = 0.0;
@@ -46,30 +62,35 @@ class DronProvider extends ChangeNotifier {
   double currentVx = 0.0;
   double currentVy = 0.0;
 
-  List<LatLng> droneTrail = [];
+  List<LatLng> droneTrail = []; //historial posiciones
 
-  LatLng? userPosition; // null hasta tener GPS
-  double userAccuracy = 0; // precisión en metros
+  //posicionamiento usuario 
+  LatLng? userPosition;
+  double userAccuracy = 0;
   StreamSubscription<Position>? _locationSub;
 
-  // WebRTC — stream de vídeo remoto para flight_screen
+  // WebRTC
   MediaStream? remoteStream;
-  bool isVideoActive = false; // controla si se muestra mapa o cámara
+  bool isVideoActive = false;
 
-  // Control interno del arm
+  // Grabación parada por defecto
+  bool isRecording = false;
+
+  // Modo detección por defecto 
+  DetectionMode detectionMode = DetectionMode.all;
+
   bool _waitingForArm = false;
   bool _armConfirmed = false;
 
-  // Timer del joystick — envía los ejes a ~20Hz mientras vuela
+  //timer y valores del joystick 
   Timer? _joystickTimer;
-
-  // valores actuales de los joysticks — se actualizan desde flight_screen
   double _lx = 0.0;
   double _ly = 0.0;
   double _rx = 0.0;
   double _ry = 0.0;
 
-  void setAltitude(String altValue) {
+
+  void setAltitude(String altValue) {   //setter de altitud 
     final alt = double.tryParse(altValue);
     if (alt == null || alt < 2.0 || alt > 50.0) {
       isConfigValid = false;
@@ -77,11 +98,11 @@ class DronProvider extends ChangeNotifier {
       return;
     }
     isConfigValid = true;
-    takeoffAltitude = alt;
+    takeoffAltitude = alt;  //actualización takeoff alt y pantalla 
     notifyListeners();
   }
 
-  void setSpeed(String speedValue) async {
+  void setSpeed(String speedValue) async {  //setter de la velocidad
     final speed = double.tryParse(speedValue);
     if (speed == null || speed < 1.0 || speed > 15.0) {
       isConfigValid = false;
@@ -91,20 +112,12 @@ class DronProvider extends ChangeNotifier {
     isConfigValid = true;
     flightSpeed = speed;
     notifyListeners();
-
     if (isConnected) {
       _mqtt.publish(Constants.topicSpeed, flightSpeed.toString());
     }
   }
 
-  // ============================================================
-  // JOYSTICK — actualiza los ejes y arranca/para el timer
-  //
-  // flight_screen llama a updateJoystick() cada vez que el
-  // usuario mueve un joystick. El timer envía los valores
-  // por WebRTC a 20Hz de forma independiente al framerate
-  // ============================================================
-  void updateJoystick({double? lx, double? ly, double? rx, double? ry}) {
+  void updateJoystick({double? lx, double? ly, double? rx, double? ry}) { //actualización independiente de cada valor del joystick 
     if (lx != null) _lx = lx;
     if (ly != null) _ly = ly;
     if (rx != null) _rx = rx;
@@ -112,9 +125,8 @@ class DronProvider extends ChangeNotifier {
   }
 
   void _startJoystickTimer() {
-    // envía los ejes a 20Hz — cada 50ms
     _joystickTimer = Timer.periodic(
-      const Duration(milliseconds: 50),
+      const Duration(milliseconds: 50),                   // Lee vlaores del joystick cada 50ms
       (_) => _webrtc.sendJoystick(_lx, _ly, _rx, _ry),
     );
   }
@@ -122,21 +134,18 @@ class DronProvider extends ChangeNotifier {
   void _stopJoystickTimer() {
     _joystickTimer?.cancel();
     _joystickTimer = null;
-    // manda un frame de reposo al parar para asegurar que el dron se detiene
     _webrtc.sendJoystick(0, 0, 0, 0);
   }
 
-  // ============================================================
-  // CONNECT — conecta MQTT y WebRTC en paralelo
-  // ============================================================
+
+  // -----------------------CONECTAR----------------------------------
   Future<void> connectDron() async {
     isLoading = true;
     isFlying = false;
     message = 'Trying to connect...';
     notifyListeners();
 
-    try {
-      // MQTT — comandos críticos
+    try {     //conexión con broker y suscripciones mqtt
       await _mqtt.connect();
       _mqtt.subscribe(Constants.topicConnected);
       _mqtt.subscribe(Constants.topicArmed);
@@ -145,15 +154,17 @@ class DronProvider extends ChangeNotifier {
       _mqtt.subscribe(Constants.topicLanded);
       _mqtt.subscribe(Constants.topicDisconnected);
       _mqtt.onMessageReceived = _handleMessage;
-      _mqtt.publish(Constants.topicConnect, 'connect');
 
-      // WebRTC — joystick + vídeo
+      _mqtt.publish(Constants.topicConnect, 'connect'); 
+
+
+      //registro callbacks webrtc 
       _webrtc.onRemoteStream = (stream) {
         remoteStream = stream;
-        notifyListeners(); // avisa a flight_screen que el vídeo está disponible
+        notifyListeners();
       };
       _webrtc.onTelemetry = (jsonStr) {
-        _handleTelemetry(jsonStr); // nueva función privada
+        _handleTelemetry(jsonStr);
       };
 
       await _webrtc.connect(Constants.webrtcSignalUrl);
@@ -166,7 +177,8 @@ class DronProvider extends ChangeNotifier {
     }
   }
 
-  ///////////// ARM /////////////
+
+  // -----------------------ARMAR----------------------------------
   Future<void> armDron() async {
     if (!isConnected) return;
     isLoading = true;
@@ -176,12 +188,11 @@ class DronProvider extends ChangeNotifier {
     _armConfirmed = false;
     notifyListeners();
 
-    _mqtt.publish(Constants.topicArm, 'arm');
+    _mqtt.publish(Constants.topicArm, 'arm'); //publicación armar
     isLoading = false;
     notifyListeners();
 
-    // timer para detectar "not ready to arm" si no llega confirmación en 5s
-    Timer(const Duration(seconds: 5), () {
+    Timer(const Duration(seconds: 5), () {    //Si en 5s no se ha devuelto una confirmación, se supone que no se está preparado para armar
       if (_waitingForArm && !_armConfirmed) {
         _waitingForArm = false;
         message = 'Not ready to arm';
@@ -190,7 +201,7 @@ class DronProvider extends ChangeNotifier {
     });
   }
 
-  ///////////// DISCONNECT /////////////
+  // -----------------------DESCONECTAR----------------------------------
   Future<void> disconnectDron() async {
     if (!isConnected) return;
     isLoading = true;
@@ -202,53 +213,94 @@ class DronProvider extends ChangeNotifier {
     _mqtt.publish(Constants.topicDisconnect, 'disconnect');
   }
 
-  ///////////// TAKEOFF /////////////
+  // -----------------------DESPEGAR----------------------------------
   Future<void> takeOff() async {
     if (!isConnected || !isArmed) return;
     isLoading = true;
     message = 'Taking off...';
     notifyListeners();
 
-    _mqtt.publish(Constants.topicTakeoff, takeoffAltitude.toInt().toString());
+    _mqtt.publish(Constants.topicTakeoff, takeoffAltitude.toInt().toString());    //publicación despegar junto con altitud de despegue 
     isLoading = false;
     notifyListeners();
   }
 
-  ///////////// LAND /////////////
+  // -----------------------ATERRIZAR----------------------------------
   Future<void> land() async {
     if (!isConnected || !isFlying) return;
     isLoading = true;
     message = 'Landing...';
     notifyListeners();
 
-    _stopJoystickTimer();
+    _stopJoystickTimer(); //deja de escuchar a los joysticjs 
     _mqtt.publish(Constants.topicLand, 'land');
     isLoading = false;
     notifyListeners();
   }
 
-  ///////////// RTL /////////////
+  // -----------------------RTL----------------------------------
   Future<void> rtl() async {
     if (!isConnected || !isFlying) return;
     isLoading = true;
     message = 'Returning to launch...';
     notifyListeners();
 
-    _stopJoystickTimer();
+    _stopJoystickTimer(); //deja de escuchar a los joystick 
     _mqtt.publish(Constants.topicRTL, 'rtl');
     isLoading = false;
     notifyListeners();
   }
 
-  // swap mapa/cámara
+    // -----------------------Swap entre mapa y vídeo----------------------------------
+
   void toggleVideo() {
     isVideoActive = !isVideoActive;
     notifyListeners();
   }
 
-  ///////////// HANDLER MENSAJES MQTT ENTRANTES /////////////
+
+// Modo detección YOLO
+  void setDetectionMode(DetectionMode mode) {
+    detectionMode = mode;
+    final modeStr = switch (mode) {
+      DetectionMode.all    => 'all',
+      DetectionMode.person => 'person',
+      DetectionMode.none   => 'none',
+    };
+    // topic: mobileFlutter/groundStation/detectionMode
+    _mqtt.publish('mobileFlutter/groundStation/detectionMode', modeStr);
+    notifyListeners();
+  }
+
+
+  void capturePhoto() { //captura 
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    _jsCapture('drone_capture_$ts.png');
+    message = '!Photo saved!';
+    notifyListeners();
+  }
+
+  void startRecording() { //video
+    if (isRecording) return;
+    _jsStartRecording();
+    isRecording = true;
+    message = 'Recording...';
+    notifyListeners();
+  }
+
+  void stopRecording() {
+    if (!isRecording) return;
+    final ts = DateTime.now().millisecondsSinceEpoch;
+    _jsStopRecording('drone_video_$ts.webm');
+    isRecording = false;
+    message = '!Video saved!';
+    notifyListeners();
+  }
+
+
+  // -----------------------HANDLER DE MENSAJES----------------------------------
   void _handleMessage(String topic, String payload) {
-    // CONNECTED
+
     if (topic == Constants.topicConnected) {
       isConnected = true;
       isLoading = false;
@@ -257,7 +309,6 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    // ARMED
     if (topic == Constants.topicArmed) {
       if (_waitingForArm) {
         _armConfirmed = true;
@@ -269,7 +320,6 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    // DISARMED
     if (topic == Constants.topicDisarmed) {
       isArmed = false;
       isFlying = false;
@@ -280,7 +330,6 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    // FLYING — arranca el timer del joystick al despegar
     if (topic == Constants.topicFlying) {
       isFlying = true;
       message = 'Flying';
@@ -289,7 +338,6 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    // LANDED
     if (topic == Constants.topicLanded) {
       isFlying = false;
       isArmed = false;
@@ -299,13 +347,14 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    // DISCONNECTED
     if (topic == Constants.topicDisconnected) {
       isConnected = false;
       isArmed = false;
       isFlying = false;
       isLoading = false;
       isVideoActive = false;
+      isRecording = false;            
+      detectionMode = DetectionMode.all; 
       _waitingForArm = false;
       _armConfirmed = false;
       currentAlt = 0.0;
@@ -320,12 +369,13 @@ class DronProvider extends ChangeNotifier {
       remoteStream = null;
       message = 'Awaiting orders';
       _mqtt.disconnect();
-      stopUserLocation(); 
+      stopUserLocation();
       notifyListeners();
       return;
     }
   }
 
+  // -----------------------HANDLER DE TELEMETRIA----------------------------------
   void _handleTelemetry(String jsonStr) {
     final status = jsonDecode(jsonStr);
     currentAlt = (status['alt'] as num).toDouble();
@@ -346,6 +396,7 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Locaclización usuario 
   Future<void> startUserLocation() async {
     final permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied ||
@@ -353,22 +404,20 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    _locationSub =
-        Geolocator.getPositionStream(
-          locationSettings: const LocationSettings(
-            accuracy: LocationAccuracy.high,
-            distanceFilter: 1,
-          ),
-        ).listen((Position pos) {
-          userAccuracy = pos.accuracy;
-          // primera posición: siempre aceptar; resto: filtrar si error > 50m
-          if (userPosition != null && pos.accuracy > 50) {
-            notifyListeners(); // actualiza badge de precisión igualmente
-            return;
-          }
-          userPosition = LatLng(pos.latitude, pos.longitude);
-          notifyListeners();
-        });
+    _locationSub = Geolocator.getPositionStream(
+      locationSettings: const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 1,  //actualizar cada metro 
+      ),
+    ).listen((Position pos) {
+      userAccuracy = pos.accuracy;
+      if (userPosition != null && pos.accuracy > 50) {  //si la precisión es mayor a 50m ignorar
+        notifyListeners();
+        return;
+      }
+      userPosition = LatLng(pos.latitude, pos.longitude);
+      notifyListeners();
+    });
   }
 
   void stopUserLocation() {
