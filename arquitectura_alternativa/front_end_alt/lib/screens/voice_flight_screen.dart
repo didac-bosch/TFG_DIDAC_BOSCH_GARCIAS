@@ -15,7 +15,6 @@ import '../core/fullscreen.dart';
 // idle - esperando pulsación, listening - micrófono activo.
 enum _ListenState { idle, listening }
 
-
 // Mapa satélite con overlay de reconocimiento de voz via Web Speech API.
 // El operador mantiene pulsado el botón PTT, dicta un comando y lo suelta.
 class VoiceFlightScreen extends StatefulWidget {
@@ -98,9 +97,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              'Mic not available — Accept the request',
-            ),
+            content: Text('Mic not available — Accept the request'),
             backgroundColor: AppColors.danger,
             duration: Duration(seconds: 3),
           ),
@@ -169,6 +166,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
   }) {
     context.read<DronProvider>().updateJoystick(lx: lx, ly: ly, rx: rx, ry: ry);
   }
+
   void _stopMove() {
     context.read<DronProvider>().updateJoystick(lx: 0, ly: 0, rx: 0, ry: 0);
   }
@@ -177,7 +175,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
   void _identifyAndExecute(String text) {
     final provider = context.read<DronProvider>();
 
-    // Lista de comandos 
+    // Lista de comandos
     if (text.contains('armar')) {
       _setCommand('ARMAR', Icons.build, AppColors.warning);
       provider.armDron();
@@ -186,14 +184,14 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
       provider.takeOff();
     } else if (text.contains('adelante')) {
       _setCommand('MOVER ADELANTE', Icons.arrow_upward, Colors.cyan);
-      _startContinuousMove(ry: -1.0); 
+      _startContinuousMove(ry: -1.0);
     } else if (text.contains('atrás') || text.contains('atras')) {
       _setCommand('MOVER ATRÁS', Icons.arrow_downward, Colors.cyan);
       _startContinuousMove(ry: 1.0);
     } else if (text.contains('derecha')) {
       _setCommand('MOVER DERECHA', Icons.arrow_forward, Colors.lightBlue);
       _startContinuousMove(rx: 1.0);
-    } else if (text.contains('izquierda')) {          
+    } else if (text.contains('izquierda')) {
       _setCommand('MOVER IZQUIERDA', Icons.arrow_back, Colors.lightBlue);
       _startContinuousMove(rx: -1.0);
     } else if (text.contains('subir')) {
@@ -226,7 +224,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
     }
   }
 
-  // Colores batería 
+  // Colores batería
   Color _getBatteryColor(double bat) {
     if (bat > 50) return AppColors.primary;
     if (bat > 20) return AppColors.warning;
@@ -406,7 +404,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
             Expanded(
               child: Stack(
                 children: [
-                  // -------- MAPA SATELITAL 
+                  // -------- MAPA SATELITAL
                   Padding(
                     padding: EdgeInsets.symmetric(
                       vertical: screenH * 0.01,
@@ -447,7 +445,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                                   ),
                                 ],
                               ),
-                            // Vector de velocidad 
+                            // Vector de velocidad
                             if (provider.isFlying)
                               PolylineLayer(
                                 polylines: [
@@ -632,7 +630,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                     ),
                   ),
 
-                  // --------- Overlay de voz 
+                  // --------- Overlay de voz
                   Positioned(
                     bottom: screenH * 0.025,
                     left: screenW * 0.04,
@@ -650,7 +648,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                               horizontal: 14,
                             ),
                             decoration: BoxDecoration(
-                              color: AppColors.surface.withOpacity(0.93),
+                              color: AppColors.surface,
                               border: Border.all(
                                 color: hasCommand
                                     ? _lastColor
@@ -710,7 +708,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                         ),
                         SizedBox(width: screenW * 0.03),
 
-                        // ----- Botón PTT 
+                        // ----- Botón PTT
                         // Tap simple  - activa permiso de micrófono (primera vez)
                         // Long press  - graba mientras se mantiene pulsado
                         // Color: gris=sin permiso, verde=listo, rojo=escuchando
@@ -736,9 +734,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                               boxShadow: isListening
                                   ? [
                                       BoxShadow(
-                                        color: AppColors.danger.withOpacity(
-                                          0.6,
-                                        ),
+                                        color: AppColors.danger,
                                         blurRadius: 18,
                                         spreadRadius: 4,
                                       ),

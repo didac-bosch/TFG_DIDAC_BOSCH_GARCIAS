@@ -9,7 +9,7 @@
   <title>EZDRONE</title>
 
   <script>
-    // ── IMU bridge — DeviceOrientationEvent ──────────────────
+    // ------- IMU bridge — DeviceOrientationEvent ----------
     var _alpha = 0, _beta = 0, _gamma = 0;
 
     function requestMotionPermission() {
@@ -39,10 +39,9 @@
     function stopOrientation() {
       window.removeEventListener('deviceorientation', handleOrientation);
     }
-    // ────────────────────────────────────────────────────────
 
 
-    // ── Captura y grabación del stream WebRTC ────────────────
+    // ------------ Captura y grabación del stream WebRTC ---------------
     let _droneRecorder = null;
     let _droneChunks   = [];
 
@@ -86,14 +85,11 @@
       };
       _droneRecorder.stop();
     };
-    // ────────────────────────────────────────────────────────
 
 
-    // ── Fullscreen helper ────────────────────────────────────
+    // ------------------ Fullscreen -------------
     window.requestFullscreenEZ = function() {
       // Excluir iPhone (iOS Safari no soporta fullscreen API)
-      // iPad con "Request Desktop Website" sí puede, pero lo excluimos
-      // para evitar errores. Cambia /iPhone|iPad/ si quieres incluir iPad.
       if (/iPhone|iPad/i.test(navigator.userAgent)) return;
       const el = document.documentElement;
       const fn = el.requestFullscreen
@@ -115,13 +111,9 @@
                || document.msExitFullscreen;
       if (fn) fn.call(document).catch(function() {});
     };
-    // ────────────────────────────────────────────────────────
 
-
-    // ── Orientation lock helper ──────────────────────────────
+    // --------- Orientation lock helper ------------------
     // orientation: 'portrait', 'landscape',
-    //              'portrait-primary', 'portrait-secondary',
-    //              'landscape-primary', 'landscape-secondary'
     window.lockOrientationEZ = function(orientation) {
       if (screen.orientation && typeof screen.orientation.lock === 'function') {
         screen.orientation.lock(orientation).catch(function() {});
@@ -133,7 +125,6 @@
         try { screen.orientation.unlock(); } catch(e) {}
       }
     };
-    // ────────────────────────────────────────────────────────
 
   </script>
 </head>

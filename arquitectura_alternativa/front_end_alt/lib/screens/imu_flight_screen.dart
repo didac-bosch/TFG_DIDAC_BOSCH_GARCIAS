@@ -12,7 +12,7 @@ import '../provider.dart';
 import '../core/styles.dart';
 import '../core/fullscreen.dart';
 
-// JS bridge — funciones expuestas desde index.html 
+// JS bridge — funciones expuestas desde index.html
 @JS()
 external void requestMotionPermission();
 @JS()
@@ -29,7 +29,7 @@ external double getGamma(); // roll  (-90–90°)
 // volante - sostener el dispositivo como un volante horizontal
 enum _ImuMode { normal, volante }
 
-// Lee alpha/beta/gamma del giroscopio a 20 Hz 
+// Lee alpha/beta/gamma del giroscopio a 20 Hz
 // y los convierte en comandos de joystick enviados al provider.
 class ImuFlightScreen extends StatefulWidget {
   const ImuFlightScreen({super.key});
@@ -46,6 +46,8 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
   double _pitch = 0.0; // beta  — inclinación adelante/atrás
   double _roll = 0.0; // gamma — inclinación lateral
   double _yaw = 0.0; // alpha — rotación sobre eje vertical
+
+  double _lyButton = 0.0; 
 
   final MapController _mapController = MapController();
 
@@ -98,6 +100,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
   void _stopImu() {
     _timer?.cancel();
     _timer = null;
+    _lyButton = 0.0;
     stopOrientation();
     if (mounted) {
       context.read<DronProvider>().updateJoystick(lx: 0, ly: 0, rx: 0, ry: 0);
@@ -111,13 +114,19 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     final double ry;
     final double rx;
     if (_mode == _ImuMode.normal) {
-      ry = -_normalForward(beta); 
+      ry = -_normalForward(beta);
       rx = _normalLateral(gamma);
     } else {
       ry = _volanteForward(gamma);
       rx = _volanteLateral(beta);
     }
-    context.read<DronProvider>().updateJoystick(lx: 0, ly: 0, rx: rx, ry: ry);
+    // _lyButton se incorpora al paquete en lugar de siempre ser 0
+    context.read<DronProvider>().updateJoystick(
+      lx: 0,
+      ly: _lyButton,
+      rx: rx,
+      ry: ry,
+    );
   }
 
   // Zona muerta ±5°/15°, rampa lineal hasta ±1.0 en 40°
@@ -167,14 +176,14 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     return LatLng(lat + dlat, lon + dlon);
   }
 
-  // Colores batería 
+  // Colores batería
   Color _getBatteryColor(double bat) {
     if (bat > 50) return AppColors.primary;
     if (bat > 20) return AppColors.warning;
     return AppColors.danger;
   }
 
-  // Recuadro ángulos 
+  // Recuadro ángulos
   Widget _buildAngleBox(
     String label,
     double value,
@@ -217,31 +226,35 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
-  // Widger botón altitud reutilizable 
+  // Widger botón altitud reutilizable
   Widget _buildAltButton({
     required bool up,
     required bool isFlying,
     required BuildContext ctx,
-    double iconSize = 22,
-    double padding = 7,
+    double iconSize = 20,
+    double padding = 6,
+
   }) {
-    return GestureDetector(         //Gesture detector 
+    return GestureDetector(
+      //Gesture detector
       onLongPressStart: (_) {
         if (!isFlying) return;
-        ctx.read<DronProvider>().updateJoystick(ly: up ? 1.0 : -1.0);
+        setState(
+          () => _lyButton = up ? 1.0 : -1.0,
+        ); // ← setState, no updateJoystick
       },
       onLongPressEnd: (_) {
-        ctx.read<DronProvider>().updateJoystick(ly: 0.0);
+        setState(() => _lyButton = 0.0);
       },
       onTapDown: (_) {
         if (!isFlying) return;
-        ctx.read<DronProvider>().updateJoystick(ly: up ? 1.0 : -1.0);
+        setState(() => _lyButton = up ? 1.0 : -1.0);
       },
       onTapUp: (_) {
-        ctx.read<DronProvider>().updateJoystick(ly: 0.0);
+        setState(() => _lyButton = 0.0);
       },
       onTapCancel: () {
-        ctx.read<DronProvider>().updateJoystick(ly: 0.0);
+        setState(() => _lyButton = 0.0);
       },
       child: Container(
         padding: EdgeInsets.all(padding),
@@ -357,7 +370,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
-          // Ángulos 
+          // Ángulos
           _buildAngleBox(
             'PITCH',
             _pitch,
@@ -747,23 +760,23 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                   up: true,
                                   isFlying: provider.isFlying,
                                   ctx: context,
-                                  iconSize: 20,
-                                  padding: 6,
+                                  iconSize: 26,
+                                  padding: 8,
                                 ),
                                 const SizedBox(height: 8),
                                 _buildAltButton(
                                   up: false,
                                   isFlying: provider.isFlying,
                                   ctx: context,
-                                  iconSize: 20,
-                                  padding: 6,
+                                  iconSize: 26,
+                                  padding: 8,
                                 ),
                               ],
                             ),
                           ),
                         ),
 
-                        // ----- Derecha mapa 
+                        // ----- Derecha mapa
                         Positioned(
                           right: 8,
                           top: 0,
@@ -780,7 +793,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                           ),
                         ),
 
-                        // ----------- Panel IMU abajo — solo portrait 
+                        // ----------- Panel IMU abajo — solo portrait
                         if (isPortrait)
                           Positioned(
                             bottom: 10,
@@ -1004,7 +1017,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
 
                   SizedBox(width: screenW * 0.01),
 
-                  //LAND 
+                  //LAND
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.flight_land, size: 16),
@@ -1033,7 +1046,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
 
                   SizedBox(width: screenW * 0.01),
 
-                  //RTL 
+                  //RTL
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.home, size: 16),
