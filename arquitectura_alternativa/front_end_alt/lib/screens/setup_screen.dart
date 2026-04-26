@@ -7,22 +7,64 @@ import 'flight_screen.dart';
 import 'voice_flight_screen.dart';
 import 'imu_flight_screen.dart';
 import '../core/fullscreen.dart';
+import 'flight_log_screen.dart';
 
-// Pantalla de configuración inicial.
-// Permite conectar el dron, ajustar altitud/velocidad,
-// seleccionar el modo de control y lanzar el vuelo.
 class SetupScreen extends StatelessWidget {
   const SetupScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
-    final screenW = MediaQuery.of(context).size.width;
-    final screenH = MediaQuery.of(context).size.height;
-    final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
+    
+    // Mostrar error de conexión si se ha producido
+    if (provider.connectionErrorMode != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        final mode = provider.connectionErrorMode!;
+        provider.clearConnectionError();
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            backgroundColor: AppColors.surface,
+            title: const Row(
+              children: [
+                Icon(Icons.error_outline, color: AppColors.danger, size: 20),
+                SizedBox(width: 8),
+                Text(
+                  'Mode not available',
+                  style: TextStyle(color: AppColors.textPrimary),
+                ),
+              ],
+            ),
+            content: Text(
+              '$mode mode is not reachable.\nCheck that the drone / simulator is running and try again.',
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text(
+                  'OK',
+                  style: TextStyle(
+                    color: AppColors.primary,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      });
+    }
+    final mq = MediaQuery.of(context);
+    final screenW = mq.size.width;
+    final screenH = mq.size.height + mq.viewInsets.bottom;
+    final isLandscape = screenH < screenW;
 
     return Scaffold(
+      resizeToAvoidBottomInset: true,
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: const Text('EZDRONE', style: TextStyles.title),
@@ -31,8 +73,43 @@ class SetupScreen extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
         toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
-        // Botón de ayuda — abre el bottom sheet con instrucciones de cada modo
         actions: [
+          IconButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const FlightLogScreen()),
+            ),
+            tooltip: 'Flight Log',
+            icon: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                const Icon(Icons.history, size: 22),
+                if (provider.flightHistory.isNotEmpty)
+                  Positioned(
+                    top: -4,
+                    right: -4,
+                    child: Container(
+                      width: 14,
+                      height: 14,
+                      decoration: const BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: AppColors.primary,
+                      ),
+                      child: Center(
+                        child: Text(
+                          '${provider.flightHistory.length}',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
           IconButton(
             onPressed: () => _showHelpSheet(context),
             tooltip: 'How to fly',
@@ -59,10 +136,12 @@ class SetupScreen extends StatelessWidget {
         ],
       ),
       body: SafeArea(
-        // Layout adaptativo: columna en portrait, dos columnas en landscape
-        child: OrientationBuilder(
-          builder: (context, orientation) {
-            return orientation == Orientation.portrait
+        child: Builder(
+          builder: (context) {
+            final mq = MediaQuery.of(context);
+            final isPortrait =
+                (mq.size.height + mq.viewInsets.bottom) > mq.size.width;
+            return isPortrait
                 ? _buildPortrait(context, provider, screenW, screenH)
                 : _buildLandscape(context, provider, screenW, screenH);
           },
@@ -71,7 +150,6 @@ class SetupScreen extends StatelessWidget {
     );
   }
 
-  // Layout portrait: elementos apilados verticalmente en scroll
   Widget _buildPortrait(
     BuildContext context,
     DronProvider provider,
@@ -79,6 +157,7 @@ class SetupScreen extends StatelessWidget {
     double screenH,
   ) {
     return SingleChildScrollView(
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: EdgeInsets.symmetric(vertical: screenH * 0.02),
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -87,7 +166,6 @@ class SetupScreen extends StatelessWidget {
           FaIcon(
             FontAwesomeIcons.helicopterSymbol,
             size: screenW * 0.2,
-            // Verde si conectado, gris si no
             color: provider.isConnected
                 ? AppColors.primary
                 : AppColors.textSecondary,
@@ -101,8 +179,12 @@ class SetupScreen extends StatelessWidget {
               child: CircularProgressIndicator(color: AppColors.primary),
             ),
           SizedBox(height: screenH * 0.03),
-          _ConfigFields(screenW: screenW, provider: provider),
-          SizedBox(height: screenH * 0.03),
+          _ConfigFields(screenW: screenW),
+          SizedBox(height: screenH * 0.025),
+          // Selector modo de conexión (ArduPilot / SITL)
+          _DroneConnectionModeSelector(screenW: screenW, provider: provider),
+          SizedBox(height: screenH * 0.025),
+          // Selector modo de control (Classic / Voice / IMU)
           _ModeSelector(screenW: screenW, provider: provider),
           SizedBox(height: screenH * 0.04),
           _ConnectButton(
@@ -128,8 +210,6 @@ class SetupScreen extends StatelessWidget {
     );
   }
 
-  // Layout landscape: icono + estado + modo a la izquierda,
-  // config + botones a la derecha
   Widget _buildLandscape(
     BuildContext context,
     DronProvider provider,
@@ -168,7 +248,12 @@ class SetupScreen extends StatelessWidget {
                     padding: EdgeInsets.symmetric(vertical: 4),
                     child: CircularProgressIndicator(color: AppColors.primary),
                   ),
-                SizedBox(height: screenH * 0.025),
+                SizedBox(height: screenH * 0.02),
+                _DroneConnectionModeSelector(
+                  screenW: screenW * 0.45,
+                  provider: provider,
+                ),
+                SizedBox(height: screenH * 0.02),
                 _ModeSelector(screenW: screenW * 0.45, provider: provider),
               ],
             ),
@@ -179,7 +264,7 @@ class SetupScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _ConfigFields(screenW: screenW * 0.5, provider: provider),
+                _ConfigFields(screenW: screenW * 0.5),
                 SizedBox(height: screenH * 0.04),
                 _ConnectButton(
                   screenW: screenW * 0.5,
@@ -207,7 +292,155 @@ class SetupScreen extends StatelessWidget {
   }
 }
 
-// Caja de texto que muestra el mensaje de estado del provider
+// ── Selector modo de CONEXIÓN (ArduPilot / SITL) ─────────────────────────────
+// Bloqueado visualmente cuando isConnected == true.
+class _DroneConnectionModeSelector extends StatelessWidget {
+  final double screenW;
+  final DronProvider provider;
+
+  const _DroneConnectionModeSelector({
+    required this.screenW,
+    required this.provider,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool locked = provider.isConnected;
+
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'DRONE MODE',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 11,
+                  letterSpacing: 1.2,
+                ),
+              ),
+              if (locked) ...[
+                const SizedBox(width: 6),
+                const Icon(
+                  Icons.lock,
+                  size: 11,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 3),
+                const Text(
+                  'disconnect to change',
+                  style: TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 9,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
+            ],
+          ),
+          const SizedBox(height: 10),
+          Opacity(
+            opacity: locked ? 0.45 : 1.0,
+            child: Wrap(
+              spacing: screenW * 0.03,
+              runSpacing: 8,
+              children: [
+                _ConnectionChip(
+                  label: 'ArduPilot',
+                  icon: Icons.developer_board,
+                  color: AppColors.primary,
+                  mode: DroneConnectionMode.ardupilot,
+                  selected: provider.droneConnectionMode,
+                  enabled: !locked,
+                  onTap: () => context
+                      .read<DronProvider>()
+                      .setDroneConnectionMode(DroneConnectionMode.ardupilot),
+                ),
+                _ConnectionChip(
+                  label: 'SITL',
+                  icon: Icons.computer,
+                  color: Colors.orange,
+                  mode: DroneConnectionMode.sitl,
+                  selected: provider.droneConnectionMode,
+                  enabled: !locked,
+                  onTap: () => context
+                      .read<DronProvider>()
+                      .setDroneConnectionMode(DroneConnectionMode.sitl),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConnectionChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final DroneConnectionMode mode;
+  final DroneConnectionMode selected;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  const _ConnectionChip({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.mode,
+    required this.selected,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isSelected = mode == selected;
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected ? color : AppColors.disabled,
+            width: isSelected ? 2.0 : 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 16,
+              color: isSelected ? color : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected
+                    ? AppColors.textPrimary
+                    : AppColors.textSecondary,
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Status box ────────────────────────────────────────────────────────────────
 class _StatusBox extends StatelessWidget {
   final double screenW;
   final double screenH;
@@ -244,33 +477,66 @@ class _StatusBox extends StatelessWidget {
   }
 }
 
-//Campos configuración, se muestran en rojo si está mal o fuera del rango
-class _ConfigFields extends StatelessWidget {
+// ── Config fields (altitud / velocidad) ───────────────────────────────────────
+class _ConfigFields extends StatefulWidget {
   final double screenW;
-  final DronProvider provider;
+  const _ConfigFields({required this.screenW});
 
-  const _ConfigFields({required this.screenW, required this.provider});
+  @override
+  State<_ConfigFields> createState() => _ConfigFieldsState();
+}
+
+class _ConfigFieldsState extends State<_ConfigFields> {
+  late final TextEditingController _altCtrl;
+  late final TextEditingController _speedCtrl;
+  bool _altValid = true;
+  bool _speedValid = true;
+
+  @override
+  void initState() {
+    super.initState();
+    final provider = context.read<DronProvider>();
+    _altCtrl = TextEditingController(text: provider.takeoffAltitude.toString());
+    _speedCtrl = TextEditingController(text: provider.flightSpeed.toString());
+  }
+
+  @override
+  void dispose() {
+    _altCtrl.dispose();
+    _speedCtrl.dispose();
+    super.dispose();
+  }
+
+  bool _checkAlt(String v) {
+    final n = double.tryParse(v.replaceAll(',', '.'));
+    return n != null && n >= 2.0 && n <= 50.0;
+  }
+
+  bool _checkSpeed(String v) {
+    final n = double.tryParse(v.replaceAll(',', '.'));
+    return n != null && n >= 1.0 && n <= 15.0;
+  }
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.05),
+      padding: EdgeInsets.symmetric(horizontal: widget.screenW * 0.05),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
           SizedBox(
-            width: screenW * 0.35,
+            width: widget.screenW * 0.35,
             child: TextFormField(
-              initialValue: provider.takeoffAltitude.toString(),
-              keyboardType: TextInputType.number,
+              controller: _altCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               style: const TextStyle(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 labelText: 'Alt (m)',
                 helperText: '2.0 - 50.0',
                 helperStyle: TextStyle(
-                  color: provider.isConfigValid
-                      ? AppColors.textSecondary
-                      : AppColors.danger,
+                  color: _altValid ? AppColors.textSecondary : AppColors.danger,
                   fontSize: 10,
                 ),
                 labelStyle: const TextStyle(color: AppColors.textSecondary),
@@ -279,26 +545,29 @@ class _ConfigFields extends StatelessWidget {
                 ),
                 focusedBorder: UnderlineInputBorder(
                   borderSide: BorderSide(
-                    color: provider.isConfigValid
-                        ? AppColors.primary
-                        : AppColors.danger,
+                    color: _altValid ? AppColors.primary : AppColors.danger,
                   ),
                 ),
               ),
-              onChanged: (v) => context.read<DronProvider>().setAltitude(v),
+              onChanged: (v) {
+                setState(() => _altValid = _checkAlt(v));
+                context.read<DronProvider>().setAltitude(v);
+              },
             ),
           ),
           SizedBox(
-            width: screenW * 0.35,
+            width: widget.screenW * 0.35,
             child: TextFormField(
-              initialValue: provider.flightSpeed.toString(),
-              keyboardType: TextInputType.number,
+              controller: _speedCtrl,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               style: const TextStyle(color: AppColors.textPrimary),
               decoration: InputDecoration(
                 labelText: 'Speed (m/s)',
                 helperText: '1.0 - 15.0',
                 helperStyle: TextStyle(
-                  color: provider.isConfigValid
+                  color: _speedValid
                       ? AppColors.textSecondary
                       : AppColors.danger,
                   fontSize: 10,
@@ -309,13 +578,14 @@ class _ConfigFields extends StatelessWidget {
                 ),
                 focusedBorder: UnderlineInputBorder(
                   borderSide: BorderSide(
-                    color: provider.isConfigValid
-                        ? AppColors.primary
-                        : AppColors.danger,
+                    color: _speedValid ? AppColors.primary : AppColors.danger,
                   ),
                 ),
               ),
-              onChanged: (v) => context.read<DronProvider>().setSpeed(v),
+              onChanged: (v) {
+                setState(() => _speedValid = _checkSpeed(v));
+                context.read<DronProvider>().setSpeed(v);
+              },
             ),
           ),
         ],
@@ -324,9 +594,7 @@ class _ConfigFields extends StatelessWidget {
   }
 }
 
-// Selector de modo de control: Classic (joystick),
-// Voice (comandos de voz) o IMU (inclinación del dispositivo).
-// Cada chip se resalta con su color propio cuando está seleccionado.
+// ── Selector modo de CONTROL (Classic / Voice / IMU) ─────────────────────────
 class _ModeSelector extends StatelessWidget {
   final double screenW;
   final DronProvider provider;
@@ -391,7 +659,6 @@ class _ModeSelector extends StatelessWidget {
   }
 }
 
-// Muestra borde y color de acento cuando está seleccionado.
 class _ModeChip extends StatelessWidget {
   final String label;
   final IconData icon;
@@ -451,10 +718,8 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-// ---------BOTONES-----------------------
+// ── Botones ───────────────────────────────────────────────────────────────────
 
-// Inicia la conexión MQTT + WebRTC con la Ground Station.
-// Deshabilitado mientras carga o si ya está conectado.
 class _ConnectButton extends StatelessWidget {
   final double screenW;
   final double screenH;
@@ -496,9 +761,6 @@ class _ConnectButton extends StatelessWidget {
   }
 }
 
-// Navega a la pantalla de vuelo correspondiente al modo seleccionado.
-// Solicita pantalla completa al navegador antes de navegar.
-// Solo habilitado si está conectado y la configuración es válida.
 class _StartFlightButton extends StatelessWidget {
   final double screenW;
   final double screenH;
@@ -515,7 +777,6 @@ class _StartFlightButton extends StatelessWidget {
     final bool enabled =
         !provider.isLoading && provider.isConnected && provider.isConfigValid;
 
-    // Color e icono cambian según el modo de control activo
     final Color modeColor = switch (provider.selectedMode) {
       ControlMode.classic => AppColors.primary,
       ControlMode.voice => Colors.teal,
@@ -547,7 +808,7 @@ class _StartFlightButton extends StatelessWidget {
           ),
           onPressed: enabled
               ? () {
-                  requestFullscreenEZ(); // pantalla completa vía JS Interop
+                  requestFullscreenEZ();
                   switch (provider.selectedMode) {
                     case ControlMode.classic:
                       Navigator.push(
@@ -577,8 +838,6 @@ class _StartFlightButton extends StatelessWidget {
   }
 }
 
-// Desconecta el dron y limpia todo el estado del provider.
-// Siempre visible; deshabilitado si no hay conexión activa o está cargando.
 class _DisconnectButton extends StatelessWidget {
   final double screenW;
   final double screenH;
@@ -618,10 +877,8 @@ class _DisconnectButton extends StatelessWidget {
   }
 }
 
-// ---------HELP SHEET-----------------------
+// ── Help sheet ────────────────────────────────────────────────────────────────
 
-// Abre un bottom sheet con instrucciones reales de los tres modos de control.
-// Se invoca desde el botón "?" del AppBar.
 void _showHelpSheet(BuildContext context) {
   showModalBottomSheet(
     context: context,
@@ -641,7 +898,6 @@ void _showHelpSheet(BuildContext context) {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Handle visual para indicar que el sheet es deslizable
             Center(
               child: Container(
                 width: 40,
@@ -653,8 +909,6 @@ void _showHelpSheet(BuildContext context) {
               ),
             ),
             const SizedBox(height: 16),
-
-            // Título del sheet
             const Row(
               children: [
                 Icon(Icons.flight, color: AppColors.primary, size: 20),
@@ -670,8 +924,6 @@ void _showHelpSheet(BuildContext context) {
               ],
             ),
             const SizedBox(height: 20),
-
-            // Sección Classic — joystick dual táctil + mapa/cámara
             const _HelpSection(
               icon: Icons.sports_esports,
               title: 'Classic Joystick',
@@ -700,8 +952,6 @@ void _showHelpSheet(BuildContext context) {
               ],
             ),
             const SizedBox(height: 16),
-
-            // Sección IMU — control por inclinación con bloqueo de orientación
             _HelpSection(
               icon: Icons.sensors,
               title: 'IMU / Gyroscope',
@@ -730,8 +980,6 @@ void _showHelpSheet(BuildContext context) {
               ],
             ),
             const SizedBox(height: 16),
-
-            // Sección Voice — PTT en español via Web Speech API (es-ES)
             _HelpSection(
               icon: Icons.mic,
               title: 'Voice Control (es-ES)',
@@ -757,8 +1005,6 @@ void _showHelpSheet(BuildContext context) {
               ],
             ),
             const SizedBox(height: 28),
-
-            // Botón de cierre del sheet
             SizedBox(
               width: double.infinity,
               child: ElevatedButton(
@@ -784,8 +1030,6 @@ void _showHelpSheet(BuildContext context) {
   );
 }
 
-// Bloque visual con borde de color para cada modo de control.
-// Agrupa un título con icono y una lista de _HelpItem.
 class _HelpSection extends StatelessWidget {
   final IconData icon;
   final String title;
@@ -811,7 +1055,6 @@ class _HelpSection extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Cabecera de sección con icono y título en mayúsculas
           Row(
             children: [
               Icon(icon, color: color, size: 18),
@@ -835,7 +1078,6 @@ class _HelpSection extends StatelessWidget {
   }
 }
 
-// Fila con icono + texto para cada instrucción dentro de una sección.
 class _HelpItem extends StatelessWidget {
   final IconData icon;
   final String text;

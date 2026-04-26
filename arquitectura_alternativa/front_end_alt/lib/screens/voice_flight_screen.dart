@@ -458,8 +458,8 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                                       _calcVelocityEndPoint(
                                         provider.currentLat,
                                         provider.currentLon,
-                                        provider.currentVx * 100,
-                                        provider.currentVy * 100,
+                                        provider.currentVx,
+                                        provider.currentVy,
                                       ),
                                     ],
                                     color: const Color.fromARGB(

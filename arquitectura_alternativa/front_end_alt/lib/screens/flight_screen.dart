@@ -9,9 +9,11 @@ import '../core/styles.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/fullscreen.dart';
+import 'dart:js_interop';
 
-// Pantalla de vuelo clásico: mapa satélite (o cámara WebRTC),
-// joystick dual y barra de acciones ARM/TAKEOFF/LAND/RTL/DISCONNECT.
+@JS('eval')
+external void _jsEval(String code);
+
 class FlightScreen extends StatefulWidget {
   const FlightScreen({super.key});
 
@@ -26,19 +28,15 @@ class _FlightScreenState extends State<FlightScreen> {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
 
-    // En portrait los joysticks van a las esquinas inferiores;
-    // en landscape se centran verticalmente a los lados.
     final bool isPortrait = screenH > screenW;
     final double joystickSize = isPortrait ? screenH * 0.17 : screenH * 0.35;
 
-    // Verde > 50 %, naranja > 20 %, rojo ≤ 20 %
     Color getBatteryColor(double bat) {
       if (bat > 50) return AppColors.primary;
       if (bat > 20) return AppColors.warning;
       return AppColors.danger;
     }
 
-    // Joystick izquierdo: ly - altitud (y negada: arriba = subir), lx - yaw
     Widget joystickLeft = SizedBox(
       width: joystickSize,
       height: joystickSize,
@@ -57,7 +55,6 @@ class _FlightScreenState extends State<FlightScreen> {
       ),
     );
 
-    // Joystick derecho: rx - roll, ry - pitch
     Widget joystickRight = SizedBox(
       width: joystickSize,
       height: joystickSize,
@@ -76,7 +73,7 @@ class _FlightScreenState extends State<FlightScreen> {
       ),
     );
 
-    // Botón de swap mapa / cámara
+    // Botón swap mapa / cámara
     Widget swapButton = GestureDetector(
       onTap: () => context.read<DronProvider>().toggleVideo(),
       child: Container(
@@ -144,7 +141,6 @@ class _FlightScreenState extends State<FlightScreen> {
                     'MODE',
                     provider.currentMode,
                   ),
-                  // Batería: spinner mientras carga, valor con color semáforo si no
                   provider.isLoading
                       ? const SizedBox(
                           width: 20,
@@ -217,7 +213,6 @@ class _FlightScreenState extends State<FlightScreen> {
                                 FlutterMap(
                                   options: MapOptions(
                                     initialCenter: LatLng(
-                                      //posición inicial dron, sino centra en EETAC
                                       provider.currentLat != 0.0
                                           ? provider.currentLat
                                           : 41.2765,
@@ -225,7 +220,7 @@ class _FlightScreenState extends State<FlightScreen> {
                                           ? provider.currentLon
                                           : 1.9888,
                                     ),
-                                    initialZoom: 17, //zoom inicial
+                                    initialZoom: 17,
                                   ),
                                   children: [
                                     TileLayer(
@@ -233,7 +228,6 @@ class _FlightScreenState extends State<FlightScreen> {
                                           'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                                       userAgentPackageName: 'com.example.app',
                                     ),
-                                    // Trail de posiciones anteriores del dron
                                     if (provider.droneTrail.length > 1)
                                       PolylineLayer(
                                         polylines: [
@@ -249,7 +243,6 @@ class _FlightScreenState extends State<FlightScreen> {
                                           ),
                                         ],
                                       ),
-                                    // Vector de velocidad
                                     if (provider.isFlying)
                                       PolylineLayer(
                                         polylines: [
@@ -276,7 +269,6 @@ class _FlightScreenState extends State<FlightScreen> {
                                           ),
                                         ],
                                       ),
-                                    // Marcador del operador (posición GPS del dispositivo)
                                     if (provider.userPosition != null)
                                       MarkerLayer(
                                         markers: [
@@ -292,7 +284,6 @@ class _FlightScreenState extends State<FlightScreen> {
                                           ),
                                         ],
                                       ),
-                                    // Sombra gris en la posición actual del dron
                                     if (provider.isFlying)
                                       CircleLayer(
                                         circles: [
@@ -314,7 +305,6 @@ class _FlightScreenState extends State<FlightScreen> {
                                           ),
                                         ],
                                       ),
-                                    // Icono del dron rotado según heading + flecha de dirección
                                     MarkerLayer(
                                       markers: [
                                         Marker(
@@ -357,7 +347,7 @@ class _FlightScreenState extends State<FlightScreen> {
                                   ],
                                 ),
 
-                              // ----------CÁMARA WebRTC 
+                              // ----------CÁMARA WebRTC
                               if (provider.isVideoActive)
                                 provider.remoteStream != null
                                     ? SizedBox.expand(
@@ -367,7 +357,7 @@ class _FlightScreenState extends State<FlightScreen> {
                                       )
                                     : const Center(
                                         child: Text(
-                                          'Waiting Sream...',
+                                          'Waiting Stream...',
                                           style: TextStyle(
                                             color: Colors.white70,
                                           ),
@@ -419,7 +409,7 @@ class _FlightScreenState extends State<FlightScreen> {
                                   ),
                                 ),
 
-                              // ------------ Mensaje estado del provider (solo en mapa)
+                              // ------------ Mensaje estado (solo en mapa)
                               if (!provider.isVideoActive)
                                 Positioned(
                                   top: 10,
@@ -453,13 +443,14 @@ class _FlightScreenState extends State<FlightScreen> {
                                   ),
                                 ),
 
-                              // ------- Botones captura / grabación (solo en cámara) 
+                              // ------- Botones captura / grabación + switch cámara (solo en cámara)
                               if (provider.isVideoActive)
                                 Positioned(
                                   top: 8,
                                   right: 8,
                                   child: Row(
                                     children: [
+                                      // 📷 Captura foto
                                       GestureDetector(
                                         onTap: () => context
                                             .read<DronProvider>()
@@ -483,7 +474,7 @@ class _FlightScreenState extends State<FlightScreen> {
                                         ),
                                       ),
                                       const SizedBox(width: 6),
-                                      // Botón REC: rojo cuando graba, neutro si no
+                                      // ⏺ Grabar / detener
                                       GestureDetector(
                                         onTap: () {
                                           if (provider.isRecording) {
@@ -515,6 +506,34 @@ class _FlightScreenState extends State<FlightScreen> {
                                             provider.isRecording
                                                 ? Icons.stop_circle
                                                 : Icons.fiber_manual_record,
+                                            color: AppColors.textPrimary,
+                                            size: 16,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(width: 6),
+                                      // Cambiar cámara
+                                      GestureDetector(
+                                        onTap: () => context
+                                            .read<DronProvider>()
+                                            .switchCamera(),
+                                        child: Container(
+                                          padding: const EdgeInsets.all(7),
+                                          decoration: BoxDecoration(
+                                            color: provider.cameraIndex == 1
+                                                ? AppColors.primary
+                                                : Colors.black54,
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                            border: Border.all(
+                                              color: provider.cameraIndex == 1
+                                                  ? AppColors.primary
+                                                  : AppColors.disabled,
+                                            ),
+                                          ),
+                                          child: const Icon(
+                                            Icons.cameraswitch,
                                             color: AppColors.textPrimary,
                                             size: 16,
                                           ),
@@ -561,7 +580,168 @@ class _FlightScreenState extends State<FlightScreen> {
                                   ),
                                 ),
 
-                              // ---- Joysticks, posición y tamaño dependiendo de la orientación
+                              // ------- BARRA DE ZOOM vertical (solo en cámara)
+                              // Posición: lateral izquierdo, centrada verticalmente.
+                              // Usa RotatedBox para que el Slider quede vertical
+                              // con el máximo (5×) arriba y el mínimo (1×) abajo.
+                              // ✅ PONER ESTO
+                              if (provider.isVideoActive)
+                                if (isPortrait)
+                                  Positioned(
+                                    left: 6,
+                                    top: 0,
+                                    bottom: 0,
+                                    child: Center(
+                                      child: Container(
+                                        width: 36,
+                                        height: screenH * 0.35,
+                                        padding: const EdgeInsets.symmetric(
+                                          vertical: 6,
+                                        ),
+                                        decoration: BoxDecoration(
+                                          color: Colors.black45,
+                                          borderRadius: BorderRadius.circular(
+                                            18,
+                                          ),
+                                          border: Border.all(
+                                            color: AppColors.disabled,
+                                          ),
+                                        ),
+                                        child: Column(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Text(
+                                              '${provider.zoomLevel.toStringAsFixed(1)}×',
+                                              style: const TextStyle(
+                                                color: AppColors.textPrimary,
+                                                fontSize: 9,
+                                                fontWeight: FontWeight.bold,
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            Expanded(
+                                              child: RotatedBox(
+                                                quarterTurns: 3,
+                                                child: SliderTheme(
+                                                  data: SliderTheme.of(context).copyWith(
+                                                    trackHeight: 2,
+                                                    thumbShape:
+                                                        const RoundSliderThumbShape(
+                                                          enabledThumbRadius: 6,
+                                                        ),
+                                                    overlayShape:
+                                                        const RoundSliderOverlayShape(
+                                                          overlayRadius: 10,
+                                                        ),
+                                                    activeTrackColor:
+                                                        AppColors.primary,
+                                                    inactiveTrackColor:
+                                                        AppColors.disabled,
+                                                    thumbColor:
+                                                        AppColors.primary,
+                                                    overlayColor:
+                                                        AppColors.primary,
+                                                  ),
+                                                  child: Slider(
+                                                    value: provider.zoomLevel,
+                                                    min: 1.0,
+                                                    max: 5.0,
+                                                    divisions: 8,
+                                                    onChanged: (v) => context
+                                                        .read<DronProvider>()
+                                                        .setZoom(v),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 2),
+                                            const Icon(
+                                              Icons.zoom_in,
+                                              color: AppColors.textSecondary,
+                                              size: 12,
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  )
+                                else
+                                  Positioned(
+                                    left: 60,
+                                    right: 60,
+                                    bottom: 8,
+                                    child: Container(
+                                      height: 36,
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 10,
+                                        vertical: 4,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.black45,
+                                        borderRadius: BorderRadius.circular(18),
+                                        border: Border.all(
+                                          color: AppColors.disabled,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          const Icon(
+                                            Icons.zoom_out,
+                                            color: AppColors.textSecondary,
+                                            size: 12,
+                                          ),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: SliderTheme(
+                                              data: SliderTheme.of(context).copyWith(
+                                                trackHeight: 2,
+                                                thumbShape:
+                                                    const RoundSliderThumbShape(
+                                                      enabledThumbRadius: 6,
+                                                    ),
+                                                overlayShape:
+                                                    const RoundSliderOverlayShape(
+                                                      overlayRadius: 10,
+                                                    ),
+                                                activeTrackColor:
+                                                    AppColors.primary,
+                                                inactiveTrackColor:
+                                                    AppColors.disabled,
+                                                thumbColor: AppColors.primary,
+                                                overlayColor: AppColors.primary,
+                                              ),
+                                              child: Slider(
+                                                value: provider.zoomLevel,
+                                                min: 1.0,
+                                                max: 5.0,
+                                                divisions: 8,
+                                                onChanged: (v) => context
+                                                    .read<DronProvider>()
+                                                    .setZoom(v),
+                                              ),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 4),
+                                          const Icon(
+                                            Icons.zoom_in,
+                                            color: AppColors.textSecondary,
+                                            size: 12,
+                                          ),
+                                          const SizedBox(width: 6),
+                                          Text(
+                                            '${provider.zoomLevel.toStringAsFixed(1)}x',
+                                            style: const TextStyle(
+                                              color: AppColors.textPrimary,
+                                              fontSize: 9,
+                                              fontWeight: FontWeight.bold,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ),
+
+                              // ---- Joysticks
                               if (isPortrait)
                                 Positioned(
                                   left: 12,
@@ -590,7 +770,7 @@ class _FlightScreenState extends State<FlightScreen> {
                                   child: Center(child: joystickRight),
                                 ),
 
-                              // -------- Botón swap: portrait = centro derecho, landscape = esquina 
+                              // -------- Botón swap
                               if (isPortrait)
                                 Positioned(
                                   right: 8,
@@ -610,7 +790,7 @@ class _FlightScreenState extends State<FlightScreen> {
                       ),
                     ),
 
-                    // ── Dropdown detección YOLO 
+                    // ── Dropdown detección YOLO
                     if (provider.isVideoActive)
                       Positioned(
                         top: 8,
@@ -636,8 +816,6 @@ class _FlightScreenState extends State<FlightScreen> {
               ),
               child: Row(
                 children: [
-
-                  // ARM — deshabilitado si ya está armado, volando o cargando
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.power_settings_new, size: 16),
@@ -667,10 +845,7 @@ class _FlightScreenState extends State<FlightScreen> {
                           : () => context.read<DronProvider>().armDron(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  // TAKEOFF
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.flight_takeoff, size: 16),
@@ -698,10 +873,7 @@ class _FlightScreenState extends State<FlightScreen> {
                           : () => context.read<DronProvider>().takeOff(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  // DISCONNECT — sale de fullscreen, desconecta y vuelve al SetupScreen
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.link_off, size: 16),
@@ -733,10 +905,7 @@ class _FlightScreenState extends State<FlightScreen> {
                             },
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  // LAND
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.flight_land, size: 16),
@@ -763,10 +932,7 @@ class _FlightScreenState extends State<FlightScreen> {
                           : () => context.read<DronProvider>().land(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  //RTL 
                   Expanded(
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.home, size: 16),
@@ -802,8 +968,6 @@ class _FlightScreenState extends State<FlightScreen> {
     );
   }
 
-  // Widget reutilizable para cada celda de la barra de telemetría:
-  // icono pequeño + etiqueta + valor en negrita.
   Widget _buildTelemetryItem(IconData icon, String label, String value) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.center,
@@ -836,7 +1000,7 @@ class _FlightScreenState extends State<FlightScreen> {
   }
 }
 
-// Inicializa el RTCVideoRenderer 
+// Inicializa el RTCVideoRenderer
 class _VideoView extends StatefulWidget {
   final MediaStream stream;
   const _VideoView({required this.stream});
@@ -854,6 +1018,19 @@ class _VideoViewState extends State<_VideoView> {
     _renderer.initialize().then((_) {
       _renderer.srcObject = widget.stream;
       setState(() {});
+      Future.delayed(const Duration(milliseconds: 300), () {
+        try {
+          _jsEval('''(function() {
+          var videos = document.querySelectorAll('video');
+          for (var v of videos) {
+            if (v.srcObject && v.srcObject.getVideoTracks().length > 0) {
+              window._droneStream = v.srcObject;
+              break;
+            }
+          }
+        })();''');
+        } catch (_) {}
+      });
     });
   }
 
@@ -872,8 +1049,7 @@ class _VideoViewState extends State<_VideoView> {
   }
 }
 
-// Dropdown de selección del modo de detección YOLO:
-// Todo / Personas / Ninguno. Se comunica con Python via MQTT en el provider.
+// Dropdown detección YOLO
 class _DetectionDropdown extends StatelessWidget {
   final DetectionMode current;
   final ValueChanged<DetectionMode> onChanged;
@@ -948,14 +1124,10 @@ class _DetectionDropdown extends StatelessWidget {
   }
 }
 
-// Calcula el punto final del vector de velocidad para dibujarlo en el mapa.
-// Convierte vx (norte, m/s) y vy (este, m/s) a desplazamiento en grados.
-// Devuelve la posición actual si la velocidad es menor de 0.3 m/s (dron estático).
 LatLng _calcVelocityEndPoint(double lat, double lon, double vx, double vy) {
   final speed = sqrt(vx * vx + vy * vy);
   if (speed < 0.3) return LatLng(lat, lon);
-
-  const scale = 6.0; // factor visual para que la flecha sea visible en el mapa
+  const scale = 6.0;
   final dlat = (vx * scale) / 111320;
   final dlon = (vy * scale) / (111320 * cos(lat * pi / 180));
   return LatLng(lat + dlat, lon + dlon);

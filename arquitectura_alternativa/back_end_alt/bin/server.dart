@@ -94,7 +94,7 @@ Future<void> _handleWebSocket(HttpRequest request) async {
   }
 }
 
-// -------------- Servidor de ficheros estáticos -----------------
+// ------- Servidor de ficheros estáticos -----------------
 // Sirve el build de Flutter Web desde la carpeta web/ del servidor.
 Future<void> _handleStatic(HttpRequest request) async {
   var path = request.uri.path;

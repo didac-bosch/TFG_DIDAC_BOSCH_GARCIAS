@@ -4,13 +4,14 @@ import 'data/webrtc.dart';
 import 'core/constants.dart';
 import 'dart:async';
 import 'dart:convert';
-import 'dart:js_interop';                     
+import 'dart:js_interop';
+import 'package:web/web.dart' as web;
 import 'package:latlong2/latlong.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:geolocator/geolocator.dart';
+import 'dart:math';
 
-
-// Llamada a funciones JavaScript declaradas en el index.html relacionadas con la captura de pantalla 
+// Llamada a funciones JavaScript declaradas en el index.html relacionadas con la captura de pantalla
 @JS('captureDroneFrame')
 external void _jsCapture(String filename);
 
@@ -20,17 +21,143 @@ external void _jsStartRecording();
 @JS('stopDroneRecording')
 external void _jsStopRecording(String filename);
 
-
-// Modos de control 
+// Modos de control
 enum ControlMode { classic, voice, imu }
 
 // Modos de detección YOLO — sincronizados con ET via MQTT
 enum DetectionMode { all, person, none }
 
+// Modos de conexión al dron
+enum DroneConnectionMode { ardupilot, sitl }
 
+// ------ FLIGHT LOG -------------------
+// Snapshot de telemetría — se guarda cada tick mientras el dron está volando
+class TelemetrySnapshot {
+  final DateTime timestamp;
+  final double lat;
+  final double lon;
+  final double alt;
+  final double speed;
+  final double bat;
+  final double heading;
+
+  TelemetrySnapshot({
+    required this.timestamp,
+    required this.lat,
+    required this.lon,
+    required this.alt,
+    required this.speed,
+    required this.bat,
+    required this.heading,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'ts': timestamp.toIso8601String(),
+    'lat': lat,
+    'lon': lon,
+    'alt': alt,
+    'speed': speed,
+    'bat': bat,
+    'heading': heading,
+  };
+
+  factory TelemetrySnapshot.fromJson(Map<String, dynamic> j) =>
+      TelemetrySnapshot(
+        timestamp: DateTime.parse(j['ts'] as String),
+        lat: (j['lat'] as num).toDouble(),
+        lon: (j['lon'] as num).toDouble(),
+        alt: (j['alt'] as num).toDouble(),
+        speed: (j['speed'] as num).toDouble(),
+        bat: (j['bat'] as num).toDouble(),
+        heading: (j['heading'] as num).toDouble(),
+      );
+}
+
+// Función auxiliar — distancia Haversine entre dos puntos en metros
+double _haversine(LatLng a, LatLng b) {
+  const R = 6371000.0;
+  final lat1 = a.latitude * pi / 180;
+  final lat2 = b.latitude * pi / 180;
+  final dLat = (b.latitude - a.latitude) * pi / 180;
+  final dLon = (b.longitude - a.longitude) * pi / 180;
+  final s =
+      sin(dLat / 2) * sin(dLat / 2) +
+      cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
+  return R * 2 * atan2(sqrt(s), sqrt(1 - s));
+}
+
+// Sesión de vuelo completa — generada al aterrizar o al desconectar
+class FlightSession {
+  final DateTime startTime;
+  final DateTime endTime;
+  final List<TelemetrySnapshot> log;
+  final String controlMode;
+  final bool completed; // true = aterrizó normal, false = desconexión en vuelo
+  final bool isSitl;
+
+  FlightSession({
+    required this.startTime,
+    required this.endTime,
+    required this.log,
+    required this.controlMode,
+    required this.completed,
+    required this.isSitl,
+  });
+
+  Duration get duration => endTime.difference(startTime);
+
+  // Trail de coordenadas válidas para el mapa (descarta (0,0))
+  List<LatLng> get trail => log
+      .map((s) => LatLng(s.lat, s.lon))
+      .where((p) => p.latitude != 0.0 && p.longitude != 0.0)
+      .toList();
+
+  double get maxAlt => log.isEmpty ? 0 : log.map((s) => s.alt).reduce(max);
+  double get maxSpeed => log.isEmpty ? 0 : log.map((s) => s.speed).reduce(max);
+  double get minBat => log.isEmpty ? 0 : log.map((s) => s.bat).reduce(min);
+
+  // Desnivel: diferencia entre la altitud máxima y la altitud de despegue
+  double get altGain {
+    if (log.isEmpty) return 0;
+    return (maxAlt - log.first.alt).clamp(0, double.infinity);
+  }
+
+  // Distancia total recorrida sumando segmentos del trail
+  double get totalDistanceM {
+    final t = trail;
+    if (t.length < 2) return 0;
+    double d = 0;
+    for (int i = 1; i < t.length; i++) {
+      d += _haversine(t[i - 1], t[i]);
+    }
+    return d;
+  }
+
+  Map<String, dynamic> toJson() => {
+    'startTime': startTime.toIso8601String(),
+    'endTime': endTime.toIso8601String(),
+    'controlMode': controlMode,
+    'completed': completed,
+    'log': log.map((s) => s.toJson()).toList(),
+    'isSitl': isSitl,
+  };
+
+  factory FlightSession.fromJson(Map<String, dynamic> j) => FlightSession(
+    startTime: DateTime.parse(j['startTime'] as String),
+    endTime: DateTime.parse(j['endTime'] as String),
+    controlMode: j['controlMode'] as String,
+    completed: j['completed'] as bool,
+    isSitl: j['isSitl'] as bool? ?? false,
+    log: (j['log'] as List)
+        .map((s) => TelemetrySnapshot.fromJson(s as Map<String, dynamic>))
+        .toList(),
+  );
+}
+
+//------------------------PROVIDER PRINCIPAL----------------------------------
 class DronProvider extends ChangeNotifier {
-  final MqttLogic _mqtt = MqttLogic();  //gestión conexión mqtt
-  final WebRTCLogic _webrtc = WebRTCLogic();  //gestión conexión webRTC
+  final MqttLogic _mqtt = MqttLogic();
+  final WebRTCLogic _webrtc = WebRTCLogic();
 
   //estados de conexión y vuelo
   bool isLoading = false;
@@ -39,15 +166,50 @@ class DronProvider extends ChangeNotifier {
   bool isArmed = false;
   bool isFlying = false;
 
-  double takeoffAltitude = 10.0;
-  double flightSpeed = 5.0;
+  double takeoffAltitude = 7.0;
+  double flightSpeed = 3.0;
   bool isConfigValid = true;
 
-  ControlMode selectedMode = ControlMode.classic; //selección por defecto
+  ControlMode selectedMode = ControlMode.classic;
+
+  DronProvider() {
+    _loadFlightHistory();
+  }
 
   void setControlMode(ControlMode mode) {
     selectedMode = mode;
-    notifyListeners();  //notify para refrescar la pantalla 
+    notifyListeners();
+  }
+
+  DroneConnectionMode droneConnectionMode = DroneConnectionMode.ardupilot;
+  void setDroneConnectionMode(DroneConnectionMode mode) {
+    if (isConnected) return; // no cambiar si ya conectado
+    droneConnectionMode = mode;
+    notifyListeners();
+  }
+
+  // Cámara activa: 0 = portátil, 1 = dron
+  int cameraIndex = 1;
+
+  // Nivel de zoom actual (1.0 a 5.0)
+  double zoomLevel = 1.0;
+
+  void switchCamera() {
+    cameraIndex = cameraIndex == 1 ? 0 : 1;
+    _mqtt.publish(
+      'mobileFlutter/groundStation/setCamera',
+      cameraIndex.toString(),
+    );
+    notifyListeners();
+  }
+
+  void setZoom(double value) {
+    zoomLevel = value.clamp(1.0, 5.0);
+    _mqtt.publish(
+      'mobileFlutter/groundStation/zoom',
+      zoomLevel.toStringAsFixed(1),
+    );
+    notifyListeners();
   }
 
   // Telemetría
@@ -62,9 +224,9 @@ class DronProvider extends ChangeNotifier {
   double currentVx = 0.0;
   double currentVy = 0.0;
 
-  List<LatLng> droneTrail = []; //historial posiciones
+  List<LatLng> droneTrail = [];
 
-  //posicionamiento usuario 
+  //posicionamiento usuario
   LatLng? userPosition;
   double userAccuracy = 0;
   StreamSubscription<Position>? _locationSub;
@@ -76,34 +238,41 @@ class DronProvider extends ChangeNotifier {
   // Grabación parada por defecto
   bool isRecording = false;
 
-  // Modo detección por defecto 
+  // Para mostrar error de conexión en pantalla
+  String? connectionErrorMode;
+
+  // Modo detección por defecto
   DetectionMode detectionMode = DetectionMode.all;
 
   bool _waitingForArm = false;
   bool _armConfirmed = false;
 
-  //timer y valores del joystick 
+  //timer y valores del joystick
   Timer? _joystickTimer;
   double _lx = 0.0;
   double _ly = 0.0;
   double _rx = 0.0;
   double _ry = 0.0;
 
+  // Lista de sesiones completadas (más reciente primero)
+  final List<FlightSession> flightHistory = [];
+  List<TelemetrySnapshot> _sessionLog = [];
+  DateTime? _sessionStart;
 
-  void setAltitude(String altValue) {   //setter de altitud 
-    final alt = double.tryParse(altValue);
+  void setAltitude(String altValue) {
+    final alt = double.tryParse(altValue.replaceAll(',', '.'));
     if (alt == null || alt < 2.0 || alt > 50.0) {
       isConfigValid = false;
       notifyListeners();
       return;
     }
     isConfigValid = true;
-    takeoffAltitude = alt;  //actualización takeoff alt y pantalla 
+    takeoffAltitude = alt;
     notifyListeners();
   }
 
-  void setSpeed(String speedValue) async {  //setter de la velocidad
-    final speed = double.tryParse(speedValue);
+  void setSpeed(String speedValue) {
+    final speed = double.tryParse(speedValue.replaceAll(',', '.'));
     if (speed == null || speed < 1.0 || speed > 15.0) {
       isConfigValid = false;
       notifyListeners();
@@ -111,13 +280,13 @@ class DronProvider extends ChangeNotifier {
     }
     isConfigValid = true;
     flightSpeed = speed;
-    notifyListeners();
     if (isConnected) {
       _mqtt.publish(Constants.topicSpeed, flightSpeed.toString());
     }
+    notifyListeners();
   }
 
-  void updateJoystick({double? lx, double? ly, double? rx, double? ry}) { //actualización independiente de cada valor del joystick 
+  void updateJoystick({double? lx, double? ly, double? rx, double? ry}) {
     if (lx != null) _lx = lx;
     if (ly != null) _ly = ly;
     if (rx != null) _rx = rx;
@@ -126,7 +295,7 @@ class DronProvider extends ChangeNotifier {
 
   void _startJoystickTimer() {
     _joystickTimer = Timer.periodic(
-      const Duration(milliseconds: 50),                   // Lee vlaores del joystick cada 50ms
+      const Duration(milliseconds: 50),
       (_) => _webrtc.sendJoystick(_lx, _ly, _rx, _ry),
     );
   }
@@ -137,6 +306,72 @@ class DronProvider extends ChangeNotifier {
     _webrtc.sendJoystick(0, 0, 0, 0);
   }
 
+  void _startSession() {
+    _sessionLog = [];
+    _sessionStart = DateTime.now();
+  }
+
+  void _endSession({required bool completed}) {
+    if (_sessionStart == null || _sessionLog.isEmpty) {
+      _sessionStart = null;
+      _sessionLog = [];
+      return;
+    }
+    flightHistory.insert(
+      0,
+      FlightSession(
+        startTime: _sessionStart!,
+        endTime: DateTime.now(),
+        log: List.unmodifiable(_sessionLog),
+        controlMode: selectedMode.name,
+        completed: completed,
+        isSitl: droneConnectionMode == DroneConnectionMode.sitl,
+      ),
+    );
+    if (flightHistory.length > 50) flightHistory.removeLast();
+    _saveFlightHistory();
+    _sessionLog = [];
+    _sessionStart = null;
+  }
+
+  void _loadFlightHistory() {
+    try {
+      final stored = web.window.localStorage.getItem('ezdrone_flight_history');
+      if (stored != null && stored.isNotEmpty) {
+        final list = jsonDecode(stored) as List;
+        flightHistory.clear();
+        flightHistory.addAll(
+          list.map((j) => FlightSession.fromJson(j as Map<String, dynamic>)),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _saveFlightHistory() {
+    try {
+      web.window.localStorage.setItem(
+        'ezdrone_flight_history',
+        jsonEncode(flightHistory.map((s) => s.toJson()).toList()),
+      );
+    } catch (_) {}
+  }
+
+  void deleteFlightSession(int index) {
+    if (index < 0 || index >= flightHistory.length) return;
+    flightHistory.removeAt(index);
+    _saveFlightHistory();
+    notifyListeners();
+  }
+
+  void clearAllSessions() {
+    flightHistory.clear();
+    _saveFlightHistory();
+    notifyListeners();
+  }
+
+  void clearConnectionError() {
+    connectionErrorMode = null;
+  }
 
   // -----------------------CONECTAR----------------------------------
   Future<void> connectDron() async {
@@ -145,7 +380,7 @@ class DronProvider extends ChangeNotifier {
     message = 'Trying to connect...';
     notifyListeners();
 
-    try {     //conexión con broker y suscripciones mqtt
+    try {
       await _mqtt.connect();
       _mqtt.subscribe(Constants.topicConnected);
       _mqtt.subscribe(Constants.topicArmed);
@@ -155,28 +390,38 @@ class DronProvider extends ChangeNotifier {
       _mqtt.subscribe(Constants.topicDisconnected);
       _mqtt.onMessageReceived = _handleMessage;
 
-      _mqtt.publish(Constants.topicConnect, 'connect'); 
+      // 1. Enviar modo de conexión ANTES del connect
+      final modeStr = switch (droneConnectionMode) {
+        DroneConnectionMode.ardupilot => 'ardupilot',
+        DroneConnectionMode.sitl => 'sitl',
+      };
+      _mqtt.publish('mobileFlutter/groundStation/setMode', modeStr);
 
+      // 2. Pequeño delay para que la ET procese el modo antes de conectar
+      await Future.delayed(const Duration(milliseconds: 150));
 
-      //registro callbacks webrtc 
+      _mqtt.publish(
+        'mobileFlutter/groundStation/setCamera',
+        cameraIndex.toString(),
+      );
+
+      // 3. Ahora sí conectar
+      _mqtt.publish(Constants.topicConnect, 'connect');
+
       _webrtc.onRemoteStream = (stream) {
         remoteStream = stream;
         notifyListeners();
       };
-      _webrtc.onTelemetry = (jsonStr) {
-        _handleTelemetry(jsonStr);
-      };
+      _webrtc.onTelemetry = (jsonStr) => _handleTelemetry(jsonStr);
 
       await _webrtc.connect(Constants.webrtcSignalUrl);
       startUserLocation();
-
     } catch (error) {
       message = '$error';
       isLoading = false;
       notifyListeners();
     }
   }
-
 
   // -----------------------ARMAR----------------------------------
   Future<void> armDron() async {
@@ -188,11 +433,11 @@ class DronProvider extends ChangeNotifier {
     _armConfirmed = false;
     notifyListeners();
 
-    _mqtt.publish(Constants.topicArm, 'arm'); //publicación armar
+    _mqtt.publish(Constants.topicArm, 'arm');
     isLoading = false;
     notifyListeners();
 
-    Timer(const Duration(seconds: 5), () {    //Si en 5s no se ha devuelto una confirmación, se supone que no se está preparado para armar
+    Timer(const Duration(seconds: 5), () {
       if (_waitingForArm && !_armConfirmed) {
         _waitingForArm = false;
         message = 'Not ready to arm';
@@ -220,7 +465,9 @@ class DronProvider extends ChangeNotifier {
     message = 'Taking off...';
     notifyListeners();
 
-    _mqtt.publish(Constants.topicTakeoff, takeoffAltitude.toInt().toString());    //publicación despegar junto con altitud de despegue 
+    // Envía altitud y velocidad juntos en el mismo payload
+    final payload = '${takeoffAltitude.toInt()}:$flightSpeed';
+    _mqtt.publish(Constants.topicTakeoff, payload);
     isLoading = false;
     notifyListeners();
   }
@@ -232,7 +479,7 @@ class DronProvider extends ChangeNotifier {
     message = 'Landing...';
     notifyListeners();
 
-    _stopJoystickTimer(); //deja de escuchar a los joysticjs 
+    _stopJoystickTimer();
     _mqtt.publish(Constants.topicLand, 'land');
     isLoading = false;
     notifyListeners();
@@ -245,42 +492,38 @@ class DronProvider extends ChangeNotifier {
     message = 'Returning to launch...';
     notifyListeners();
 
-    _stopJoystickTimer(); //deja de escuchar a los joystick 
+    _stopJoystickTimer();
     _mqtt.publish(Constants.topicRTL, 'rtl');
     isLoading = false;
     notifyListeners();
   }
 
-    // -----------------------Swap entre mapa y vídeo----------------------------------
-
+  // -----------------------Swap entre mapa y vídeo----------------------------------
   void toggleVideo() {
     isVideoActive = !isVideoActive;
     notifyListeners();
   }
 
-
-// Modo detección YOLO
+  // Modo detección YOLO
   void setDetectionMode(DetectionMode mode) {
     detectionMode = mode;
     final modeStr = switch (mode) {
-      DetectionMode.all    => 'all',
+      DetectionMode.all => 'all',
       DetectionMode.person => 'person',
-      DetectionMode.none   => 'none',
+      DetectionMode.none => 'none',
     };
-    // topic: mobileFlutter/groundStation/detectionMode
     _mqtt.publish('mobileFlutter/groundStation/detectionMode', modeStr);
     notifyListeners();
   }
 
-
-  void capturePhoto() { //captura 
+  void capturePhoto() {
     final ts = DateTime.now().millisecondsSinceEpoch;
     _jsCapture('drone_capture_$ts.png');
     message = '!Photo saved!';
     notifyListeners();
   }
 
-  void startRecording() { //video
+  void startRecording() {
     if (isRecording) return;
     _jsStartRecording();
     isRecording = true;
@@ -297,10 +540,8 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-
   // -----------------------HANDLER DE MENSAJES----------------------------------
   void _handleMessage(String topic, String payload) {
-
     if (topic == Constants.topicConnected) {
       isConnected = true;
       isLoading = false;
@@ -313,10 +554,10 @@ class DronProvider extends ChangeNotifier {
       if (_waitingForArm) {
         _armConfirmed = true;
         _waitingForArm = false;
-        isArmed = true;
-        message = 'BEWARE, MOTORS ARMED!!!';
-        notifyListeners();
       }
+      isArmed = true;
+      message = 'BEWARE, MOTORS ARMED!!!';
+      notifyListeners();
       return;
     }
 
@@ -333,12 +574,14 @@ class DronProvider extends ChangeNotifier {
     if (topic == Constants.topicFlying) {
       isFlying = true;
       message = 'Flying';
+      _startSession();
       _startJoystickTimer();
       notifyListeners();
       return;
     }
 
     if (topic == Constants.topicLanded) {
+      _endSession(completed: true);
       isFlying = false;
       isArmed = false;
       _armConfirmed = false;
@@ -348,13 +591,14 @@ class DronProvider extends ChangeNotifier {
     }
 
     if (topic == Constants.topicDisconnected) {
+      _endSession(completed: false);
       isConnected = false;
       isArmed = false;
       isFlying = false;
       isLoading = false;
       isVideoActive = false;
-      isRecording = false;            
-      detectionMode = DetectionMode.all; 
+      isRecording = false;
+      detectionMode = DetectionMode.all;
       _waitingForArm = false;
       _armConfirmed = false;
       currentAlt = 0.0;
@@ -367,9 +611,20 @@ class DronProvider extends ChangeNotifier {
       currentVy = 0.0;
       droneTrail.clear();
       remoteStream = null;
-      message = 'Awaiting orders';
+      cameraIndex = 1;
+      zoomLevel = 1.0;
       _mqtt.disconnect();
       stopUserLocation();
+
+      if (payload.startsWith('mode_unavailable')) {
+        final mode = payload.split(':').last.toUpperCase();
+        message = '$mode mode not available';
+        connectionErrorMode = mode;
+      } else {
+        message = 'Awaiting orders';
+        connectionErrorMode = null;
+      }
+
       notifyListeners();
       return;
     }
@@ -393,10 +648,26 @@ class DronProvider extends ChangeNotifier {
       droneTrail.add(LatLng(currentLat, currentLon));
       if (droneTrail.length > 100) droneTrail.removeAt(0);
     }
+
+    // Si el dron está volando, registrar snapshot de telemetría cada tick
+    if (isFlying && _sessionStart != null && currentLat != 0.0) {
+      _sessionLog.add(
+        TelemetrySnapshot(
+          timestamp: DateTime.now(),
+          lat: currentLat,
+          lon: currentLon,
+          alt: currentAlt,
+          speed: currentSpeed,
+          bat: currentBat,
+          heading: currentHeading,
+        ),
+      );
+    }
+
     notifyListeners();
   }
 
-  // Locaclización usuario 
+  // Localización usuario
   Future<void> startUserLocation() async {
     final permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied ||
@@ -404,20 +675,21 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
-    _locationSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 1,  //actualizar cada metro 
-      ),
-    ).listen((Position pos) {
-      userAccuracy = pos.accuracy;
-      if (userPosition != null && pos.accuracy > 50) {  //si la precisión es mayor a 50m ignorar
-        notifyListeners();
-        return;
-      }
-      userPosition = LatLng(pos.latitude, pos.longitude);
-      notifyListeners();
-    });
+    _locationSub =
+        Geolocator.getPositionStream(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            distanceFilter: 1,
+          ),
+        ).listen((Position pos) {
+          userAccuracy = pos.accuracy;
+          if (userPosition != null && pos.accuracy > 50) {
+            notifyListeners();
+            return;
+          }
+          userPosition = LatLng(pos.latitude, pos.longitude);
+          notifyListeners();
+        });
   }
 
   void stopUserLocation() {

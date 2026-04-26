@@ -13,3 +13,6 @@ external void lockOrientationEZ(String orientation);
 
 @JS('unlockOrientationEZ')
 external void unlockOrientationEZ();
+
+@JS('downloadCSVEZ')
+external void downloadCSVEZ(String filename, String content);

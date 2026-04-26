@@ -47,7 +47,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
   double _roll = 0.0; // gamma — inclinación lateral
   double _yaw = 0.0; // alpha — rotación sobre eje vertical
 
-  double _lyButton = 0.0; 
+  double _lyButton = 0.0;
 
   final MapController _mapController = MapController();
 
@@ -233,7 +233,6 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     required BuildContext ctx,
     double iconSize = 20,
     double padding = 6,
-
   }) {
     return GestureDetector(
       //Gesture detector
@@ -285,8 +284,8 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     final angle = atan2(vy, vx);
     final bool moving = speed > 0.3;
     const double maxSize = 22.0;
-    final double norm = (speed / 5.0).clamp(0.0, 1.0);
-    final double arrowSz = (maxSize * norm).clamp(8.0, maxSize);
+    final double norm = ((speed - 0.3) / 4.7).clamp(0.0, 1.0);
+    final double arrowSz = (maxSize * norm).clamp(0.0, maxSize);
     const green = Color.fromARGB(255, 0, 255, 132);
 
     return AnimatedOpacity(
@@ -776,22 +775,36 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                           ),
                         ),
 
-                        // ----- Derecha mapa
-                        Positioned(
-                          right: 8,
-                          top: 0,
-                          bottom: 0,
-                          child: Center(
-                            child: isPortrait
-                                ? (provider.isFlying
-                                      ? _buildVelocityArrow(
-                                          provider.currentVx,
-                                          provider.currentVy,
-                                        )
-                                      : const SizedBox.shrink())
-                                : _buildLandscapeImuPanel(),
+                        // ----- Flecha velocidad
+                        if (provider.isFlying)
+                          isPortrait
+                              ? Positioned(
+                                  right: 8,
+                                  top: 0,
+                                  bottom: 0,
+                                  child: Center(
+                                    child: _buildVelocityArrow(
+                                      provider.currentVx,
+                                      provider.currentVy,
+                                    ),
+                                  ),
+                                )
+                              : Positioned(
+                                  top: 10,
+                                  left: 8,
+                                  child: _buildVelocityArrow(
+                                    provider.currentVx,
+                                    provider.currentVy,
+                                  ),
+                                ),
+
+                        if (!isPortrait)
+                          Positioned(
+                            right: 8,
+                            top: 0,
+                            bottom: 0,
+                            child: Center(child: _buildLandscapeImuPanel()),
                           ),
-                        ),
 
                         // ----------- Panel IMU abajo — solo portrait
                         if (isPortrait)
@@ -1017,6 +1030,38 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
 
                   SizedBox(width: screenW * 0.01),
 
+                  // DISCONNECT — sale de fullscreen, desconecta y vuelve al SetupScreen
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.link_off, size: 16),
+                      label: const Text(
+                        'DISC',
+                        overflow: TextOverflow.ellipsis,
+                        maxLines: 1,
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.danger,
+                        disabledBackgroundColor: AppColors.danger,
+                        foregroundColor: AppColors.textPrimary,
+                        disabledForegroundColor: AppColors.textSecondary,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                      ),
+                      onPressed:
+                          provider.isLoading ||
+                              !provider.isConnected ||
+                              provider.isArmed ||
+                              provider.isFlying
+                          ? null
+                          : () {
+                              context.read<DronProvider>().disconnectDron();
+                              exitFullscreenEZ();
+                              Navigator.pop(context);
+                            },
+                    ),
+                  ),
+
                   //LAND
                   Expanded(
                     child: ElevatedButton.icon(
@@ -1074,38 +1119,6 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                   ),
 
                   SizedBox(width: screenW * 0.01),
-
-                  // DISCONNECT — sale de fullscreen, desconecta y vuelve al SetupScreen
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.link_off, size: 16),
-                      label: const Text(
-                        'DISC',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.danger,
-                        disabledBackgroundColor: AppColors.danger,
-                        foregroundColor: AppColors.textPrimary,
-                        disabledForegroundColor: AppColors.textSecondary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed:
-                          provider.isLoading ||
-                              !provider.isConnected ||
-                              provider.isArmed ||
-                              provider.isFlying
-                          ? null
-                          : () {
-                              context.read<DronProvider>().disconnectDron();
-                              exitFullscreenEZ();
-                              Navigator.pop(context);
-                            },
-                    ),
-                  ),
                 ],
               ),
             ),

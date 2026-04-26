@@ -89,13 +89,16 @@ def _stopGo(self):
 
 
 def changeNavSpeed (self, speed):
+    applyGo = False  # variable para evitar error de modo guiado
     self.navSpeed = speed
-    newParameters = [{'ID': "WPNAV_SPEED", 'Value': speed*100}]
+    newParameters = [{'ID': "WPNAV_SPEED", 'Value': speed*100},
+                     {'ID': "LOIT_SPEED_MS", 'Value': speed}]
     self.setParams(newParameters)
     if self.verbose:
         logging.info("Nueva velocidad de navegación: %s", str(speed))
     # vuelvo a ordenar que navegue en la dirección en la que estaba navegando
-    self.go (self.direction)
+    if applyGo:
+        self.go (self.direction)
 
 def go(self, direction):
     speed = self.navSpeed
