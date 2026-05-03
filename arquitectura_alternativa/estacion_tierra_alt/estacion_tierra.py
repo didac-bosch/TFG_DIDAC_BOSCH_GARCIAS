@@ -17,7 +17,7 @@ from aiortc.sdp import candidate_from_sdp
 from av import VideoFrame
 import torch
 
-from dronLink.Dron import Dron  # type: ignore
+from dronLink.Dron import Dron 
 
 # ============================================================
 # CONSTANTES
@@ -25,7 +25,7 @@ from dronLink.Dron import Dron  # type: ignore
 
 BROKER      = 'broker.hivemq.com'
 PORT_MQTT   = 1883
-SIGNAL_URL  = 'wss://dronseetac.upc.edu:8104/ws'
+SIGNAL_URL  = 'wss://dronseetac.upc.edu:8105/ws'
 
 MY_ID     = 'python'
 REMOTE_ID = 'browser'
@@ -189,19 +189,34 @@ def on_message(client, userdata, message):
 
             already_connected = dron.state in ('connected', 'armed', 'flying', 'returning')
 
+            # Determinar conn_str actual
+            if flight_mode == 'ardupilot':
+                target_conn = 'com7'
+            else:
+                target_conn = 'tcp:127.0.0.1:5763'
+
+            # Si está conectado pero a otro endpoint, forzar reconexión
+            if already_connected and hasattr(dron, '_conn_str') and dron._conn_str != target_conn:
+                already_connected = False
+                try:
+                    dron.stop_sending_telemetry_info()
+                    dron.disconnect()
+                except Exception:
+                    pass
+
             if not already_connected:
                 print('Conectando al dron...')
                 try:
-                    dron.connect(conn_str,baud)
+                    dron.connect(conn_str, baud)
+                    dron._conn_str = conn_str   # guardar el endpoint activo
                     if dron.vehicle is None:
                         raise Exception('Vehicle is None after connect')
                     dron.frequency = 2
-                    dron.send_telemetry_info(process_telemetry_info)              
+                    dron.send_telemetry_info(process_telemetry_info)
                 except Exception as e:
                     print("Error al conectar")
-                    client.publish('groundStation/mobileFlutter/disconnected','connection_failed')
+                    client.publish('groundStation/mobileFlutter/disconnected', 'connection_failed')
                     return
-        
             else:
                 print(f'Recuperación de sesión — estado: "{dron.state}"')
                 if _pc is not None:
@@ -209,8 +224,8 @@ def on_message(client, userdata, message):
                         asyncio.run_coroutine_threadsafe(_pc.close(), loop)
                     except Exception:
                         pass
-                    _pc             = None
-                    _camera_track   = None
+                    _pc = None
+                    _camera_track = None
                     telemetry_channel = None
                 try:
                     dron.stop_sending_telemetry_info()
@@ -402,23 +417,38 @@ def on_message(client, userdata, message):
                 )
                 time.sleep(action_secs)
 
+         # ── START MISSION ─────────────────────────────────────────
+    if command == 'startMission':
+        if _pending_mission is None:
+            print('[MISSION] No hay misión cargada')
+            client.publish('groundStation/mobileFlutter/missionStarted', 'error')
+            return
+
         def run_mission():
-            print('[MISSION] Iniciando misión manual...')
-            time.sleep(0.5)
-            client.publish('groundStation/mobileFlutter/armed', 'armed')
+            print('[MISSION] Iniciando misión...')
+
+            # 1. Publicamos missionStarted:ok ANTES del takeoff.
+            #    Flutter tiene un timeout de 10s — si takeoff tarda más,
+            #    Flutter cancela isMissionMode y el tracking desaparece.
+            client.publish('groundStation/mobileFlutter/missionStarted', 'ok')
 
             try:
-                dron.arm()
-                dron.takeOff(_pending_mission['takeOffAlt'])
-                dron.vehicle.set_mode('LOITER')
+                # 2. Arm condicional: si viene de flight_screen ya está armado.
+                #    Re-armar con motores activos provoca abort en ArduPilot.
+                if not dron.vehicle.motors_armed():
+                    print('[MISSION] Armando motores...')
+                    dron.arm()
+                    client.publish('groundStation/mobileFlutter/armed', 'armed')
 
-                time.sleep(0.5)
+                dron.takeOff(_pending_mission['takeOffAlt'])
+                print('[MISSION] Despegue completado')
+
+                dron.changeNavSpeed(_pending_mission['speed'])
                 client.publish('groundStation/mobileFlutter/flying', 'flying')
 
                 waypoints = _pending_mission['waypoints']
 
                 for index, wp in enumerate(waypoints):
-                    # Publicar waypoint activo para que Flutter lo ilumine en el mapa
                     client.publish(
                         'groundStation/mobileFlutter/missionWaypoint',
                         str(index)
@@ -426,7 +456,6 @@ def on_message(client, userdata, message):
                     print(f'[MISSION] Navegando a WP {index+1}/{len(waypoints)}')
                     dron.goto(float(wp['lat']), float(wp['lon']), float(wp['alt']))
 
-                    # Ejecutar acción
                     if index < len(_pending_actions):
                         action      = _pending_actions[index]
                         action_type = action.get('type', 'none')
@@ -447,18 +476,17 @@ def on_message(client, userdata, message):
                             time.sleep(action_secs)
 
                         elif action_type == 'rtl':
-                            print(f'[MISSION] WP {index+1}: RTL — abortando misión')
+                            print(f'[MISSION] WP {index+1}: RTL')
                             dron.RTL()
                             client.publish('groundStation/mobileFlutter/landed', 'landed')
-                            return  # ← para el loop aquí
+                            return
 
                         elif action_type == 'land':
-                            print(f'[MISSION] WP {index+1}: LAND — aterrizando')
+                            print(f'[MISSION] WP {index+1}: LAND')
                             dron.Land()
                             client.publish('groundStation/mobileFlutter/landed', 'landed')
-                            return  # ← para el loop aquí
+                            return
 
-                # Fin normal — RTL automático
                 print('[MISSION] Misión completada — RTL automático')
                 dron.RTL()
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
@@ -695,6 +723,7 @@ async def webrtc_client():
 
 dron          = Dron()
 dron.navSpeed = 3.0
+dron._conn_str = None
 
 client_name = 'groundStation' + str(random.randint(1000, 9000))
 client      = mqtt.Client(client_name)

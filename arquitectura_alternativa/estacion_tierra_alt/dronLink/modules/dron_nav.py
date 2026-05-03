@@ -89,7 +89,7 @@ def _stopGo(self):
 
 
 def changeNavSpeed (self, speed):
-    applyGo = False  # variable para evitar error de modo guiado
+    applyGo=False
     self.navSpeed = speed
     newParameters = [{'ID': "WPNAV_SPEED", 'Value': speed*100},
                      {'ID': "LOIT_SPEED_MS", 'Value': speed}]
@@ -139,5 +139,3 @@ def go(self, direction):
             self.cmd = self._prepare_command(0, 0, speed, bodyRef=True)
         if self.verbose:
                 logging.info("Navego en dirección %s", str(direction))
-
-

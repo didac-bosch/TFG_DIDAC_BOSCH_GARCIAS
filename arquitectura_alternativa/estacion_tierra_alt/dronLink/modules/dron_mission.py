@@ -132,8 +132,8 @@ def _executeFlightPlan (self, flightPlan, inWaypoint= None, callback=None, param
                 ]
 
         }
-        El dron armará, despegara hasta la altura indicada, navegará por los waypoints y acabará
-        con un RTL
+        El dron armará (si no está ya armado), despegara hasta la altura indicada,
+        navegará por los waypoints y acabará con un RTL.
         En el caso de que se haya especificado una funcion inWaypoint, al llegar a cada waypoint
         se ejecutará esa función pasándole como parámetros el indice del waypoint en la lista y el
         propio waypoint.
@@ -149,7 +149,11 @@ def _executeFlightPlan (self, flightPlan, inWaypoint= None, callback=None, param
 
     takeOffAlt = flightPlan['takeOffAlt']
 
-    self.arm()
+    # Armamos solo si los motores no están ya armados — en el flujo EZDrone
+    # el usuario arma desde Flutter antes de pulsar START, así que re-armar
+    # con los motores activos causaría un abort del autopiloto.
+    if not self.vehicle.motors_armed():
+        self.arm()
 
     self.takeOff(takeOffAlt)
 

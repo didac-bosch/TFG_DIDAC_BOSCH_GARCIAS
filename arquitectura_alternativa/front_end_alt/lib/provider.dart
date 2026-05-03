@@ -899,6 +899,9 @@ class DronProvider extends ChangeNotifier {
         final mode = payload.split(':').last.toUpperCase();
         message = '$mode mode not available';
         connectionErrorMode = mode;
+      } else if (payload == 'connection_failed') {
+        message = 'Could not connect to drone. Check connection.';
+        connectionErrorMode = null;
       } else {
         message = 'Awaiting orders';
         connectionErrorMode = null;
