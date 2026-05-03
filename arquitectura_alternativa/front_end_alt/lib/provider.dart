@@ -30,6 +30,9 @@ enum DetectionMode { all, person, none }
 // Modos de conexión al dron
 enum DroneConnectionMode { ardupilot, sitl }
 
+//flag de control
+bool _waitingForConnect = false;
+
 // ------ FLIGHT LOG -------------------
 // Snapshot de telemetría — se guarda cada tick mientras el dron está volando
 class TelemetrySnapshot {
@@ -154,6 +157,143 @@ class FlightSession {
   );
 }
 
+// ─── FLIGHT PLAN MODELS ───────────────────────────────────────────────────────
+
+enum WaypointActionType { none, hover, takePhoto, recordVideo, rtl, land }
+
+class WaypointAction {
+  final WaypointActionType type;
+  final double seconds;
+
+  const WaypointAction({
+    this.type = WaypointActionType.none,
+    this.seconds = 5.0,
+  });
+
+  WaypointAction copyWith({WaypointActionType? type, double? seconds}) =>
+      WaypointAction(type: type ?? this.type, seconds: seconds ?? this.seconds);
+
+  String get label {
+    switch (type) {
+      case WaypointActionType.none:
+        return 'None';
+      case WaypointActionType.hover:
+        return 'Hover ${seconds.toInt()}s';
+      case WaypointActionType.takePhoto:
+        return 'Photo';
+      case WaypointActionType.recordVideo:
+        return 'Rec ${seconds.toInt()}s';
+      case WaypointActionType.rtl:
+        return 'RTL';
+      case WaypointActionType.land:
+        return 'Land';
+    }
+  }
+
+  Map<String, dynamic> toJson() => {'type': type.name, 'seconds': seconds};
+
+  factory WaypointAction.fromJson(Map<String, dynamic> j) => WaypointAction(
+    type: WaypointActionType.values.firstWhere(
+      (t) => t.name == (j['type'] as String? ?? 'none'),
+      orElse: () => WaypointActionType.none,
+    ),
+    seconds: (j['seconds'] as num?)?.toDouble() ?? 5.0,
+  );
+}
+
+class FlightWaypoint {
+  final double lat;
+  final double lon;
+  final double altM;
+  final WaypointAction action;
+
+  const FlightWaypoint({
+    required this.lat,
+    required this.lon,
+    this.altM = 10.0,
+    this.action = const WaypointAction(),
+  });
+
+  FlightWaypoint copyWith({
+    double? lat,
+    double? lon,
+    double? altM,
+    WaypointAction? action,
+  }) => FlightWaypoint(
+    lat: lat ?? this.lat,
+    lon: lon ?? this.lon,
+    altM: altM ?? this.altM,
+    action: action ?? this.action,
+  );
+
+  Map<String, dynamic> toJson() => {
+    'lat': lat,
+    'lon': lon,
+    'altM': altM,
+    'action': action.toJson(),
+  };
+
+  factory FlightWaypoint.fromJson(Map<String, dynamic> j) => FlightWaypoint(
+    lat: (j['lat'] as num).toDouble(),
+    lon: (j['lon'] as num).toDouble(),
+    altM: (j['altM'] as num?)?.toDouble() ?? 10.0,
+    action: WaypointAction.fromJson(
+      (j['action'] as Map<String, dynamic>?) ?? {},
+    ),
+  );
+}
+
+class FlightPlan {
+  final String id;
+  final String name;
+  final DateTime createdAt;
+  final List<FlightWaypoint> waypoints;
+
+  FlightPlan({
+    required this.id,
+    required this.name,
+    required this.createdAt,
+    required this.waypoints,
+  });
+
+  double get totalDistanceM {
+    if (waypoints.length < 2) return 0;
+    double d = 0;
+    for (int i = 1; i < waypoints.length; i++) {
+      d += _haversineWP(waypoints[i - 1], waypoints[i]);
+    }
+    return d;
+  }
+
+  static double _haversineWP(FlightWaypoint a, FlightWaypoint b) {
+    const R = 6371000.0;
+    final lat1 = a.lat * pi / 180;
+    final lat2 = b.lat * pi / 180;
+    final dLat = (b.lat - a.lat) * pi / 180;
+    final dLon = (b.lon - a.lon) * pi / 180;
+    final s =
+        sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat1) * cos(lat2) * sin(dLon / 2) * sin(dLon / 2);
+    return R * 2 * atan2(sqrt(s), sqrt(1 - s));
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'name': name,
+    'createdAt': createdAt.toIso8601String(),
+    'waypoints': waypoints.map((w) => w.toJson()).toList(),
+  };
+
+  factory FlightPlan.fromJson(Map<String, dynamic> j) => FlightPlan(
+    id: j['id'] as String,
+    name: j['name'] as String,
+    createdAt: DateTime.parse(j['createdAt'] as String),
+    waypoints: (j['waypoints'] as List)
+        .map((w) => FlightWaypoint.fromJson(w as Map<String, dynamic>))
+        .toList(),
+  );
+}
+
 //------------------------PROVIDER PRINCIPAL----------------------------------
 class DronProvider extends ChangeNotifier {
   final MqttLogic _mqtt = MqttLogic();
@@ -174,6 +314,7 @@ class DronProvider extends ChangeNotifier {
 
   DronProvider() {
     _loadFlightHistory();
+    _loadFlightPlans();
   }
 
   void setControlMode(ControlMode mode) {
@@ -256,6 +397,11 @@ class DronProvider extends ChangeNotifier {
 
   // Lista de sesiones completadas (más reciente primero)
   final List<FlightSession> flightHistory = [];
+  final List<FlightPlan> flightPlans = [];
+  bool missionUploaded = false;
+  bool isMissionMode = false;
+  int activeMissionWaypoint = -1;
+  String? currentMissionPlanId;
   List<TelemetrySnapshot> _sessionLog = [];
   DateTime? _sessionStart;
 
@@ -307,12 +453,14 @@ class DronProvider extends ChangeNotifier {
   }
 
   void _startSession() {
+    if (_sessionStart != null) return;
     _sessionLog = [];
     _sessionStart = DateTime.now();
   }
 
   void _endSession({required bool completed}) {
-    if (_sessionStart == null || _sessionLog.isEmpty) {
+    if (_sessionStart == null) return;
+    if (_sessionLog.isEmpty) {
       _sessionStart = null;
       _sessionLog = [];
       return;
@@ -369,6 +517,76 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void _loadFlightPlans() {
+    try {
+      final stored = web.window.localStorage.getItem('ezdrone_flight_plans');
+      if (stored != null && stored.isNotEmpty) {
+        final list = jsonDecode(stored) as List;
+        flightPlans.clear();
+        flightPlans.addAll(
+          list.map((j) => FlightPlan.fromJson(j as Map<String, dynamic>)),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _saveFlightPlans() {
+    try {
+      web.window.localStorage.setItem(
+        'ezdrone_flight_plans',
+        jsonEncode(flightPlans.map((p) => p.toJson()).toList()),
+      );
+    } catch (_) {}
+  }
+
+  void saveFlightPlan(FlightPlan plan) {
+    final idx = flightPlans.indexWhere((p) => p.id == plan.id);
+    if (idx >= 0) {
+      flightPlans[idx] = plan;
+    } else {
+      flightPlans.insert(0, plan);
+    }
+    _saveFlightPlans();
+    notifyListeners();
+  }
+
+  void deleteFlightPlan(String id) {
+    flightPlans.removeWhere((p) => p.id == id);
+    _saveFlightPlans();
+    notifyListeners();
+  }
+
+  Future<void> uploadMission(FlightPlan plan) async {
+    currentMissionPlanId = plan.id;
+    if (!isConnected) return;
+    final payload = jsonEncode({
+      'planId': plan.id,
+      'takeoffAlt': takeoffAltitude.toInt(),
+      'speed': flightSpeed,
+      'waypoints': plan.waypoints.map((w) => w.toJson()).toList(),
+    });
+    _mqtt.publish(Constants.topicUploadMission, payload);
+    message = 'Mission ready — arm and press START';
+    notifyListeners();
+  }
+
+  Future<void> startMission() async {
+    if (!isConnected || !missionUploaded) return;
+    _mqtt.publish(Constants.topicSpeed, flightSpeed.toString());
+    _mqtt.publish(Constants.topicStartMission, 'start');
+    isMissionMode = true;
+    message = 'Starting mission...';
+    notifyListeners();
+
+    Future.delayed(const Duration(seconds: 10), () {
+      if (isMissionMode && !isFlying) {
+        isMissionMode = false;
+        message = 'Mission start timed out';
+        notifyListeners();
+      }
+    });
+  }
+
   void clearConnectionError() {
     connectionErrorMode = null;
   }
@@ -376,36 +594,56 @@ class DronProvider extends ChangeNotifier {
   // -----------------------CONECTAR----------------------------------
   Future<void> connectDron() async {
     isLoading = true;
-    isFlying = false;
+    _waitingForConnect =
+        false; //  reset por si se intenta conectar de nuevo tras un fallo
+    isFlying = false; //   durante la ventana inicial serán ignorados
     message = 'Trying to connect...';
     notifyListeners();
 
     try {
       await _mqtt.connect();
+
       _mqtt.subscribe(Constants.topicConnected);
       _mqtt.subscribe(Constants.topicArmed);
       _mqtt.subscribe(Constants.topicDisarmed);
       _mqtt.subscribe(Constants.topicFlying);
       _mqtt.subscribe(Constants.topicLanded);
       _mqtt.subscribe(Constants.topicDisconnected);
+      _mqtt.subscribe(Constants.topicMissionUploaded);
+      _mqtt.subscribe(Constants.topicMissionStarted);
+      _mqtt.subscribe(Constants.topicMissionWaypoint);
       _mqtt.onMessageReceived = _handleMessage;
 
-      // 1. Enviar modo de conexión ANTES del connect
+      // 1. Enviar modo ANTES del connect
       final modeStr = switch (droneConnectionMode) {
         DroneConnectionMode.ardupilot => 'ardupilot',
         DroneConnectionMode.sitl => 'sitl',
       };
       _mqtt.publish('mobileFlutter/groundStation/setMode', modeStr);
 
-      // 2. Pequeño delay para que la ET procese el modo antes de conectar
-      await Future.delayed(const Duration(milliseconds: 150));
+      // 2. Flush window: dejamos pasar los retained messages del broker
+      //    (_waitingForConnect = false - serán ignorados en _handleMessage)
+      await Future.delayed(const Duration(milliseconds: 500));
+
+      // 3. A partir de aquí sí esperamos el connected real
+      _waitingForConnect = true;
+
+      // 4. Timeout de conexión: 20 s
+      Timer(const Duration(seconds: 20), () {
+        if (_waitingForConnect) {
+          _waitingForConnect = false;
+          isLoading = false;
+          message = 'Connection timeout — drone not responding';
+          notifyListeners();
+        }
+      });
 
       _mqtt.publish(
         'mobileFlutter/groundStation/setCamera',
         cameraIndex.toString(),
       );
 
-      // 3. Ahora sí conectar
+      // 5. Comando connect
       _mqtt.publish(Constants.topicConnect, 'connect');
 
       _webrtc.onRemoteStream = (stream) {
@@ -417,6 +655,7 @@ class DronProvider extends ChangeNotifier {
       await _webrtc.connect(Constants.webrtcSignalUrl);
       startUserLocation();
     } catch (error) {
+      _waitingForConnect = false;
       message = '$error';
       isLoading = false;
       notifyListeners();
@@ -543,6 +782,8 @@ class DronProvider extends ChangeNotifier {
   // -----------------------HANDLER DE MENSAJES----------------------------------
   void _handleMessage(String topic, String payload) {
     if (topic == Constants.topicConnected) {
+      if (!_waitingForConnect) return; // descarta retained/stale messages
+      _waitingForConnect = false;
       isConnected = true;
       isLoading = false;
       message = 'Connection established!';
@@ -551,10 +792,9 @@ class DronProvider extends ChangeNotifier {
     }
 
     if (topic == Constants.topicArmed) {
-      if (_waitingForArm) {
-        _armConfirmed = true;
-        _waitingForArm = false;
-      }
+      if (!_waitingForArm && !isMissionMode) return;
+      _armConfirmed = true;
+      _waitingForArm = false;
       isArmed = true;
       message = 'BEWARE, MOTORS ARMED!!!';
       notifyListeners();
@@ -573,9 +813,10 @@ class DronProvider extends ChangeNotifier {
 
     if (topic == Constants.topicFlying) {
       isFlying = true;
+      isMissionMode = missionUploaded;
       message = 'Flying';
       _startSession();
-      _startJoystickTimer();
+      if (!isMissionMode) _startJoystickTimer();
       notifyListeners();
       return;
     }
@@ -585,7 +826,40 @@ class DronProvider extends ChangeNotifier {
       isFlying = false;
       isArmed = false;
       _armConfirmed = false;
+      isMissionMode = false;
+      missionUploaded = false;
+      currentMissionPlanId = null;
+      activeMissionWaypoint = -1;
       message = 'Landed';
+      notifyListeners();
+      return;
+    }
+
+    if (topic == Constants.topicMissionUploaded) {
+      missionUploaded = payload == 'ok';
+      message = missionUploaded
+          ? 'Mission ready — press START'
+          : 'Mission upload failed';
+      notifyListeners();
+      return;
+    }
+
+    if (topic == Constants.topicMissionStarted) {
+      if (payload == 'ok') {
+        isMissionMode = true;
+        isFlying = true;
+        message = 'Mission started — AUTO mode active';
+        _startSession();
+      } else {
+        isMissionMode = false;
+        message = 'Mission failed to start';
+      }
+      notifyListeners();
+      return;
+    }
+
+    if (topic == Constants.topicMissionWaypoint) {
+      activeMissionWaypoint = int.tryParse(payload) ?? 0;
       notifyListeners();
       return;
     }
@@ -598,6 +872,7 @@ class DronProvider extends ChangeNotifier {
       isLoading = false;
       isVideoActive = false;
       isRecording = false;
+      _waitingForConnect = false;
       detectionMode = DetectionMode.all;
       _waitingForArm = false;
       _armConfirmed = false;
@@ -613,6 +888,10 @@ class DronProvider extends ChangeNotifier {
       remoteStream = null;
       cameraIndex = 1;
       zoomLevel = 1.0;
+      missionUploaded = false;
+      isMissionMode = false;
+      activeMissionWaypoint = -1;
+      currentMissionPlanId = null;
       _mqtt.disconnect();
       stopUserLocation();
 

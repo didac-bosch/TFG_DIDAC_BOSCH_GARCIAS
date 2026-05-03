@@ -1,21 +1,32 @@
+import 'dart:js_interop';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
+import 'package:web/web.dart' as web;
 import '../provider.dart';
 import '../core/styles.dart';
 import '../core/fullscreen.dart';
+import 'flight_plan_screen.dart';
 
 // Pantalla de historial de vuelos.
 // Muestra las sesiones grabadas con mapa, estadísticas y opción de descarga CSV.
-class FlightLogScreen extends StatelessWidget {
+class FlightLogScreen extends StatefulWidget {
   const FlightLogScreen({super.key});
+
+  @override
+  State<FlightLogScreen> createState() => _FlightLogScreenState();
+}
+
+class _FlightLogScreenState extends State<FlightLogScreen> {
+  bool _showPlans = false;
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
     final sessions = provider.flightHistory;
+    final plans = provider.flightPlans;
     final screenH = MediaQuery.of(context).size.height;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
@@ -23,63 +34,204 @@ class FlightLogScreen extends StatelessWidget {
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppBar(
-        title: const Text('FLIGHT LOG', style: TextStyles.title),
+        title: Text(
+          _showPlans ? 'FLIGHT PLANS' : 'FLIGHT LOG',
+          style: TextStyles.title,
+        ),
         backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,
         centerTitle: true,
         toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
         actions: [
-          // Badge con el número de sesiones guardadas
-          if (sessions.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(left: 8),
-              child: Center(
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: AppColors.primary),
-                  ),
-                  child: Text(
-                    '${sessions.length}',
-                    style: const TextStyle(
-                      color: AppColors.textPrimary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.bold,
+          if (!_showPlans) ...[
+            // Badge sesiones
+            if (sessions.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.primary),
+                    ),
+                    child: Text(
+                      '${sessions.length}',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
                   ),
                 ),
               ),
-            ),
-          // Botón borrar todo — solo visible si hay sesiones
-          if (sessions.isNotEmpty)
-            IconButton(
-              icon: const Icon(Icons.delete_sweep, color: AppColors.danger),
-              tooltip: 'Clear all flights',
-              onPressed: () => _confirmClearAll(context),
-            ),
+            if (sessions.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.delete_sweep, color: AppColors.danger),
+                tooltip: 'Clear all flights',
+                onPressed: () => _confirmClearAll(context),
+              ),
+          ] else ...[
+            // Badge planes
+            if (plans.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.teal,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${plans.length}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+          ],
           const SizedBox(width: 4),
         ],
       ),
-      body: sessions.isEmpty
-          ? _buildEmpty()
-          : ListView.builder(
-              padding: const EdgeInsets.all(12),
-              itemCount: sessions.length,
-              itemBuilder: (ctx, i) => _SessionCard(
-                session: sessions[i],
-                realIndex: i, // índice real en la lista para borrar
+
+      // FAB — solo visible en Plans tab para crear nuevo plan
+      floatingActionButton: _showPlans
+          ? FloatingActionButton.small(
+              backgroundColor: AppColors.primary,
+              tooltip: 'New plan',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const FlightPlanScreen()),
               ),
+              child: const Icon(Icons.add, color: AppColors.textPrimary),
+            )
+          : null,
+
+      body: Column(
+        children: [
+          // ── Tab toggle ────────────────────────────────────────────────────
+          Container(
+            color: AppColors.surface,
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: _TabButton(
+                    label: 'LOGS',
+                    icon: Icons.history,
+                    selected: !_showPlans,
+                    onTap: () => setState(() => _showPlans = false),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _TabButton(
+                    label: 'PLANS',
+                    icon: Icons.map_outlined,
+                    selected: _showPlans,
+                    onTap: () => setState(() => _showPlans = true),
+                  ),
+                ),
+              ],
             ),
+          ),
+          const Divider(height: 1, color: AppColors.disabled),
+
+          // ── Contenido ─────────────────────────────────────────────────────
+          Expanded(
+            child: _showPlans
+                ? _buildPlansTab(context, provider)
+                : _buildLogsTab(sessions),
+          ),
+        ],
+      ),
     );
   }
 
-  // Diálogo de confirmación para borrar todo el historial
+  // ── Logs tab (contenido original) ─────────────────────────────────────────
+  Widget _buildLogsTab(List<FlightSession> sessions) {
+    if (sessions.isEmpty) return _buildEmptyLogs();
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: sessions.length,
+      itemBuilder: (ctx, i) => _SessionCard(session: sessions[i], realIndex: i),
+    );
+  }
+
+  Widget _buildEmptyLogs() {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.flight_land, size: 64, color: AppColors.textSecondary),
+          SizedBox(height: 16),
+          Text(
+            'No flights yet',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          SizedBox(height: 8),
+          Text(
+            'Complete a flight to see it here',
+            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Plans tab ─────────────────────────────────────────────────────────────
+  Widget _buildPlansTab(BuildContext context, DronProvider provider) {
+    final plans = provider.flightPlans;
+    if (plans.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.map_outlined, size: 64, color: AppColors.textSecondary),
+            SizedBox(height: 16),
+            Text(
+              'No plans yet',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Tap + to create your first flight plan',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: plans.length,
+      itemBuilder: (ctx, i) => _PlanCard(plan: plans[i], provider: provider),
+    );
+  }
+
+  // ── Dialogs ────────────────────────────────────────────────────────────────
   void _confirmClearAll(BuildContext context) {
     showDialog(
       context: context,
@@ -115,30 +267,406 @@ class FlightLogScreen extends StatelessWidget {
       ),
     );
   }
+}
 
-  // Estado vacío — todavía no hay vuelos grabados en esta sesión
-  Widget _buildEmpty() {
-    return const Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(Icons.flight_land, size: 64, color: AppColors.textSecondary),
-          SizedBox(height: 16),
-          Text(
-            'No flights yet',
-            style: TextStyle(
-              color: AppColors.textPrimary,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
+// ─── TAB BUTTON ───────────────────────────────────────────────────────────────
+class _TabButton extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _TabButton({
+    required this.label,
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        decoration: BoxDecoration(
+          color: selected
+              ? AppColors.primary.withValues(alpha: 0.15)
+              : AppColors.background,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: selected ? AppColors.primary : AppColors.disabled,
+            width: selected ? 1.5 : 1.0,
+          ),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              icon,
+              size: 14,
+              color: selected ? AppColors.primary : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 5),
+            Text(
+              label,
+              style: TextStyle(
+                color: selected ? AppColors.primary : AppColors.textSecondary,
+                fontSize: 12,
+                fontWeight: selected ? FontWeight.bold : FontWeight.normal,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── PLAN CARD ────────────────────────────────────────────────────────────────
+class _PlanCard extends StatelessWidget {
+  final FlightPlan plan;
+  final DronProvider provider;
+
+  const _PlanCard({required this.plan, required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final dist = plan.totalDistanceM;
+    final distStr = dist < 1000
+        ? '${dist.toStringAsFixed(0)} m'
+        : '${(dist / 1000).toStringAsFixed(2)} km';
+    final createdStr = _fmtDate(plan.createdAt);
+
+    return GestureDetector(
+      onTap: () => Navigator.push(
+        context,
+        MaterialPageRoute(builder: (_) => FlightPlanScreen(existingPlan: plan)),
+      ),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 10),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.disabled),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Cabecera
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      plan.name,
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Chip nº waypoints
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 2,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.teal.withValues(alpha: 0.15),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: Colors.teal),
+                    ),
+                    child: Text(
+                      '${plan.waypoints.length} WP',
+                      style: const TextStyle(
+                        color: Colors.teal,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  GestureDetector(
+                    onTap: () => _downloadFlightPlan(plan),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.download_outlined,
+                        size: 16,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  // Borrar
+                  GestureDetector(
+                    onTap: () => _confirmDelete(context),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(
+                        Icons.delete_outline,
+                        size: 16,
+                        color: AppColors.danger,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              // Fecha
+              Text(
+                'Created $createdStr',
+                style: const TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 10,
+                ),
+              ),
+              const SizedBox(height: 10),
+              // Stats
+              Row(
+                children: [
+                  _PlanStat(Icons.straighten, distStr, 'Distance'),
+                  const SizedBox(width: 20),
+                  _PlanStat(
+                    Icons.location_on_outlined,
+                    '${plan.waypoints.length}',
+                    'Waypoints',
+                  ),
+                  if (plan.waypoints.isNotEmpty) ...[
+                    const SizedBox(width: 20),
+                    _PlanStat(
+                      Icons.height,
+                      '${plan.waypoints.map((w) => w.altM).reduce((a, b) => a > b ? a : b).toStringAsFixed(0)} m',
+                      'Max Alt',
+                    ),
+                  ],
+                ],
+              ),
+              // ── Botones UPLOAD / START ────────────────────────────
+              if (provider.isConnected) ...[
+                const SizedBox(height: 10),
+                const Divider(height: 1, color: AppColors.disabled),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.upload, size: 14),
+                        label: const Text(
+                          'UPLOAD',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppColors.primary,
+                          foregroundColor: AppColors.textPrimary,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed: () => provider.uploadMission(plan),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        icon: const Icon(Icons.play_arrow, size: 14),
+                        label: const Text(
+                          'START',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor:
+                              provider.missionUploaded &&
+                                  provider.currentMissionPlanId == plan.id
+                              ? Colors.teal
+                              : AppColors.disabled,
+                          foregroundColor: AppColors.textPrimary,
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                        ),
+                        onPressed:
+                            provider.missionUploaded &&
+                                provider.currentMissionPlanId == plan.id
+                            ? () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) =>
+                                        FlightPlanScreen(existingPlan: plan),
+                                  ),
+                                );
+                              }
+                            : null,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _confirmDelete(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Delete this plan?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: Text(
+          '"${plan.name}" will be permanently deleted.',
+          style: const TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.textSecondary),
             ),
           ),
-          SizedBox(height: 8),
-          Text(
-            'Complete a flight to see it here',
-            style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+          TextButton(
+            onPressed: () {
+              context.read<DronProvider>().deleteFlightPlan(plan.id);
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'Delete',
+              style: TextStyle(color: AppColors.danger),
+            ),
           ),
         ],
       ),
+    );
+  }
+
+  String _fmtDate(DateTime dt) {
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ];
+    final h = dt.hour.toString().padLeft(2, '0');
+    final m = dt.minute.toString().padLeft(2, '0');
+    return '${dt.day} ${months[dt.month - 1]} ${dt.year} · $h:$m';
+  }
+}
+
+String _buildWaypoints(FlightPlan plan) {
+  final sb = StringBuffer();
+  sb.writeln('QGC WPL 110');
+
+  // Fila 0: home — mismas coords que el primer WP, altitud 0
+  final home = plan.waypoints.isNotEmpty
+      ? plan.waypoints.first
+      : const FlightWaypoint(lat: 41.2765, lon: 1.9888);
+  sb.writeln(
+    '0\t1\t0\t16\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t'
+    '${home.lat.toStringAsFixed(7)}\t${home.lon.toStringAsFixed(7)}\t0.000000\t1',
+  );
+
+  for (int i = 0; i < plan.waypoints.length; i++) {
+    final wp = plan.waypoints[i];
+    final idx = i + 1;
+    final lat = wp.lat.toStringAsFixed(8);
+    final lon = wp.lon.toStringAsFixed(8);
+    final alt = wp.altM.toStringAsFixed(6);
+
+    switch (wp.action.type) {
+      case WaypointActionType.none:
+      case WaypointActionType.takePhoto:
+      case WaypointActionType.recordVideo:
+        // NAV_WAYPOINT sin espera (CMD 2000 = variante ArduPilot simple)
+        sb.writeln(
+          '$idx\t0\t3\t2000\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t$lat\t$lon\t$alt\t1',
+        );
+      case WaypointActionType.hover:
+        // NAV_WAYPOINT con espera en PARAM1
+        final secs = wp.action.seconds.toStringAsFixed(8);
+        sb.writeln(
+          '$idx\t0\t3\t16\t$secs\t0.00000000\t0.00000000\t0.00000000\t$lat\t$lon\t$alt\t1',
+        );
+      case WaypointActionType.rtl:
+        // NAV_RETURN_TO_LAUNCH — sin coords
+        sb.writeln(
+          '$idx\t0\t3\t20\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t0.000000\t1',
+        );
+      case WaypointActionType.land:
+        // NAV_LAND
+        sb.writeln(
+          '$idx\t0\t3\t21\t0.00000000\t0.00000000\t0.00000000\t0.00000000\t$lat\t$lon\t0.000000\t1',
+        );
+    }
+  }
+
+  return sb.toString();
+}
+
+class _PlanStat extends StatelessWidget {
+  final IconData icon;
+  final String value;
+  final String label;
+
+  const _PlanStat(this.icon, this.value, this.label);
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 12, color: AppColors.primary),
+        const SizedBox(width: 3),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              value,
+              style: const TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            Text(
+              label,
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 9,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
@@ -666,8 +1194,13 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                                 polylines: [
                                   Polyline(
                                     points: visibleTrail,
-                                    color: AppColors.primary,
-                                    strokeWidth: 3.0,
+                                    color: const Color.fromARGB(
+                                      255,
+                                      121,
+                                      40,
+                                      198,
+                                    ),
+                                    strokeWidth: 2.0,
                                   ),
                                 ],
                               ),
@@ -1057,4 +1590,22 @@ String _formatDate(DateTime dt) {
   final h = dt.hour.toString().padLeft(2, '0');
   final m = dt.minute.toString().padLeft(2, '0');
   return '${dt.day} ${months[dt.month - 1]} ${dt.year} · $h:$m';
+}
+
+void _downloadFlightPlan(FlightPlan plan) {
+  final content = _buildWaypoints(plan);
+  final safeName = plan.name
+      .replaceAll(RegExp(r'[^\w\s-]'), '')
+      .replaceAll(' ', '_');
+  final filename = 'EZplan_$safeName.waypoints';
+  final blob = web.Blob(
+    [content.toJS].toJS,
+    web.BlobPropertyBag(type: 'text/plain'),
+  );
+  final url = web.URL.createObjectURL(blob);
+  final a = web.document.createElement('a') as web.HTMLAnchorElement;
+  a.href = url;
+  a.download = filename;
+  a.click();
+  web.URL.revokeObjectURL(url);
 }

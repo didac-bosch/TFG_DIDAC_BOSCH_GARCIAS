@@ -48,6 +48,8 @@ _monitoring       = False
 _pc               = None
 telemetry_channel = None
 _camera_track     = None
+_pending_mission = None
+_pending_actions = []
 
 # ============================================================
 # CALIBRACIÓN CÁMARA (corrección ojo de pez)
@@ -176,11 +178,11 @@ def on_message(client, userdata, message):
                 conn_str = 'com7'
                 baud     = 57600
             elif flight_mode == 'sitl':
-                conn_str = 'tcp:127.0.0.1:5762'
-                baud     = None
+                baud = 115200
+                conn_str = 'tcp:127.0.0.1:5763'
             else:  # tello — placeholder
-                print('[WARN] Modo Tello no implementado aún.')
-                client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
+                print('[ERROR] Modo "{flight_mode}"no disponible.')
+                client.publish('groundStation/mobileFlutter/disconnected', f'mode_unavailable:{flight_mode}')
                 return
 
             print(f'[INFO] Modo: {flight_mode} | Conexión: {conn_str} | Cámara: {camera_index}')
@@ -189,12 +191,17 @@ def on_message(client, userdata, message):
 
             if not already_connected:
                 print('Conectando al dron...')
-                if baud:
-                    dron.connect(conn_str, baud)
-                else:
-                    dron.connect(conn_str)
-                dron.frequency = 2
-                dron.send_telemetry_info(process_telemetry_info)
+                try:
+                    dron.connect(conn_str,baud)
+                    if dron.vehicle is None:
+                        raise Exception('Vehicle is None after connect')
+                    dron.frequency = 2
+                    dron.send_telemetry_info(process_telemetry_info)              
+                except Exception as e:
+                    print("Error al conectar")
+                    client.publish('groundStation/mobileFlutter/disconnected','connection_failed')
+                    return
+        
             else:
                 print(f'Recuperación de sesión — estado: "{dron.state}"')
                 if _pc is not None:
@@ -273,6 +280,7 @@ def on_message(client, userdata, message):
         if dron.state in ('flying', 'returning'):
             def rtl():
                 print('Volviendo al punto de lanzamiento...')
+                dron.changeNavSpeed(dron.navSpeed)
                 dron.RTL()
                 print('RTL completado!')
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
@@ -327,6 +335,140 @@ def on_message(client, userdata, message):
             print('Dron desconectado!')
             client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
         threading.Thread(target=desconectar).start()
+        
+    # ── UPLOAD MISSION ────────────────────────────────────────
+    if command == 'uploadMission':
+        global _pending_mission, _pending_actions
+        try:
+            data       = json.loads(message.payload.decode())
+            wp_data    = data.get('waypoints', [])
+            takeoff_alt = data.get('takeoffAlt', 5)
+            speed       = data.get('speed', dron.navSpeed)
+
+            dronlink_waypoints = []
+            actions            = []
+
+            for wp in wp_data:
+                dronlink_waypoints.append({
+                    'lat': float(wp['lat']),
+                    'lon': float(wp['lon']),
+                    'alt': float(wp['altM']),
+                })
+                actions.append(wp.get('action', {'type': 'none', 'seconds': 5}))
+
+            _pending_mission = {
+                'speed':      speed,
+                'takeOffAlt': takeoff_alt,
+                'waypoints':  dronlink_waypoints,
+            }
+            _pending_actions = actions
+
+            print(f'[MISSION] Plan guardado: {len(dronlink_waypoints)} waypoints')
+            client.publish('groundStation/mobileFlutter/missionUploaded', 'ok')
+
+        except Exception as e:
+            print(f'[MISSION ERROR] {e}')
+            client.publish('groundStation/mobileFlutter/missionUploaded', f'error:{e}')
+
+
+    # ── START MISSION ─────────────────────────────────────────
+    if command == 'startMission':
+        if _pending_mission is None:
+            print('[MISSION] No hay misión cargada')
+            return
+
+        def handle_waypoint(index, wp):
+            """Callback ejecutado al llegar a cada waypoint."""
+            client.publish('groundStation/mobileFlutter/missionWaypoint',str(index))
+            if index >= len(_pending_actions):
+                return
+            action      = _pending_actions[index]
+            action_type = action.get('type', 'none')
+            action_secs = float(action.get('seconds', 5))
+
+            if action_type == 'hover':
+                print(f'[MISSION] WP {index+1}: hover {action_secs}s')
+                time.sleep(action_secs)
+
+            elif action_type == 'takePhoto':
+                print(f'[MISSION] WP {index+1}: foto')
+                client.publish('groundStation/mobileFlutter/cameraAction', 'photo')
+
+            elif action_type == 'recordVideo':
+                print(f'[MISSION] WP {index+1}: grabar {action_secs}s')
+                client.publish(
+                    'groundStation/mobileFlutter/cameraAction',
+                    f'record:{int(action_secs)}'
+                )
+                time.sleep(action_secs)
+
+        def run_mission():
+            print('[MISSION] Iniciando misión manual...')
+            time.sleep(0.5)
+            client.publish('groundStation/mobileFlutter/armed', 'armed')
+
+            try:
+                dron.arm()
+                dron.takeOff(_pending_mission['takeOffAlt'])
+                dron.vehicle.set_mode('LOITER')
+
+                time.sleep(0.5)
+                client.publish('groundStation/mobileFlutter/flying', 'flying')
+
+                waypoints = _pending_mission['waypoints']
+
+                for index, wp in enumerate(waypoints):
+                    # Publicar waypoint activo para que Flutter lo ilumine en el mapa
+                    client.publish(
+                        'groundStation/mobileFlutter/missionWaypoint',
+                        str(index)
+                    )
+                    print(f'[MISSION] Navegando a WP {index+1}/{len(waypoints)}')
+                    dron.goto(float(wp['lat']), float(wp['lon']), float(wp['alt']))
+
+                    # Ejecutar acción
+                    if index < len(_pending_actions):
+                        action      = _pending_actions[index]
+                        action_type = action.get('type', 'none')
+                        action_secs = float(action.get('seconds', 5))
+
+                        if action_type == 'hover':
+                            print(f'[MISSION] WP {index+1}: hover {action_secs}s')
+                            time.sleep(action_secs)
+
+                        elif action_type == 'takePhoto':
+                            client.publish('groundStation/mobileFlutter/cameraAction', 'photo')
+
+                        elif action_type == 'recordVideo':
+                            client.publish(
+                                'groundStation/mobileFlutter/cameraAction',
+                                f'record:{int(action_secs)}'
+                            )
+                            time.sleep(action_secs)
+
+                        elif action_type == 'rtl':
+                            print(f'[MISSION] WP {index+1}: RTL — abortando misión')
+                            dron.RTL()
+                            client.publish('groundStation/mobileFlutter/landed', 'landed')
+                            return  # ← para el loop aquí
+
+                        elif action_type == 'land':
+                            print(f'[MISSION] WP {index+1}: LAND — aterrizando')
+                            dron.Land()
+                            client.publish('groundStation/mobileFlutter/landed', 'landed')
+                            return  # ← para el loop aquí
+
+                # Fin normal — RTL automático
+                print('[MISSION] Misión completada — RTL automático')
+                dron.RTL()
+                client.publish('groundStation/mobileFlutter/landed', 'landed')
+
+            except Exception as e:
+                print(f'[MISSION ERROR] {e}')
+                client.publish('groundStation/mobileFlutter/landed', 'landed')
+
+        threading.Thread(target=run_mission, daemon=True).start()
+
 
 # ============================================================
 # WEBRTC — Video Track con corrección de lente + zoom + YOLO
@@ -442,6 +584,11 @@ def handle_joystick(data_str):
 
         threshold = 0.1
         def to_pwm(val): return int(1500 + val * 500)
+        
+        yaw_expo = 0.4
+        yaw_scale = 0.25
+        def apply_expo(val,expo):return expo*val**3 + (1-expo)*val
+        yaw_shaped = apply_expo(lx, yaw_expo)*yaw_scale
 
         roll     = to_pwm(rx) if abs(rx) >= threshold else 1500
         pitch    = to_pwm(ry) if abs(ry) >= threshold else 1500

@@ -8,6 +8,8 @@ import 'voice_flight_screen.dart';
 import 'imu_flight_screen.dart';
 import '../core/fullscreen.dart';
 import 'flight_log_screen.dart';
+import 'flight_plan_screen.dart';
+
 
 class SetupScreen extends StatelessWidget {
   const SetupScreen({super.key});
@@ -15,7 +17,7 @@ class SetupScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
-    
+
     // Mostrar error de conexión si se ha producido
     if (provider.connectionErrorMode != null) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -74,6 +76,15 @@ class SetupScreen extends StatelessWidget {
         centerTitle: true,
         toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
         actions: [
+          IconButton(
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                  builder: (_) => const FlightPlanScreen()),
+            ),
+            tooltip: 'Flight Planner',
+            icon: const Icon(Icons.edit_location_alt_outlined, size: 22),
+          ),
           IconButton(
             onPressed: () => Navigator.push(
               context,
