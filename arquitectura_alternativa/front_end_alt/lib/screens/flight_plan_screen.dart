@@ -859,7 +859,7 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
                   ),
                 ],
               ),
-            // Waypoints — el activo brilla en teal
+            // Waypoints — el activo brilla y el dron se muestra con su icono y orientación real
             MarkerLayer(
               markers: [
                 for (int i = 0; i < _waypoints.length; i++)
