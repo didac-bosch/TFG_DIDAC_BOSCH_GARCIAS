@@ -9,7 +9,7 @@ import 'imu_flight_screen.dart';
 import '../core/fullscreen.dart';
 import 'flight_log_screen.dart';
 import 'flight_plan_screen.dart';
-
+import 'tello_flight_screen.dart';
 
 class SetupScreen extends StatelessWidget {
   const SetupScreen({super.key});
@@ -79,8 +79,7 @@ class SetupScreen extends StatelessWidget {
           IconButton(
             onPressed: () => Navigator.push(
               context,
-              MaterialPageRoute(
-                  builder: (_) => const FlightPlanScreen()),
+              MaterialPageRoute(builder: (_) => const FlightPlanScreen()),
             ),
             tooltip: 'Flight Planner',
             icon: const Icon(Icons.edit_location_alt_outlined, size: 22),
@@ -381,6 +380,17 @@ class _DroneConnectionModeSelector extends StatelessWidget {
                       .read<DronProvider>()
                       .setDroneConnectionMode(DroneConnectionMode.sitl),
                 ),
+                _ConnectionChip(
+                  label: 'Tello',
+                  icon: Icons.flight,
+                  color: Colors.lightBlue,
+                  mode: DroneConnectionMode.tello,
+                  selected: provider.droneConnectionMode,
+                  enabled: !locked,
+                  onTap: () => context
+                      .read<DronProvider>()
+                      .setDroneConnectionMode(DroneConnectionMode.tello),
+                ),
               ],
             ),
           ),
@@ -530,6 +540,24 @@ class _ConfigFieldsState extends State<_ConfigFields> {
 
   @override
   Widget build(BuildContext context) {
+    final isTello =
+        context.watch<DronProvider>().droneConnectionMode ==
+        DroneConnectionMode.tello;
+
+    if (isTello) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Text(
+          'Tello takeoff altitude is fixed (~50 cm)',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: AppColors.textSecondary,
+            fontSize: 12,
+            fontStyle: FontStyle.italic,
+          ),
+        ),
+      );
+    }
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: widget.screenW * 0.05),
       child: Row(
@@ -614,6 +642,9 @@ class _ModeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final bool isTello =
+        provider.droneConnectionMode == DroneConnectionMode.tello;
+
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
       child: Column(
@@ -642,26 +673,28 @@ class _ModeSelector extends StatelessWidget {
                   ControlMode.classic,
                 ),
               ),
-              _ModeChip(
-                label: 'Voice',
-                icon: Icons.mic,
-                color: Colors.teal,
-                mode: ControlMode.voice,
-                selected: provider.selectedMode,
-                onTap: () => context.read<DronProvider>().setControlMode(
-                  ControlMode.voice,
+              if (!isTello) ...[
+                _ModeChip(
+                  label: 'Voice',
+                  icon: Icons.mic,
+                  color: Colors.teal,
+                  mode: ControlMode.voice,
+                  selected: provider.selectedMode,
+                  onTap: () => context.read<DronProvider>().setControlMode(
+                    ControlMode.voice,
+                  ),
                 ),
-              ),
-              _ModeChip(
-                label: 'IMU',
-                icon: Icons.sensors,
-                color: Colors.deepPurple,
-                mode: ControlMode.imu,
-                selected: provider.selectedMode,
-                onTap: () => context.read<DronProvider>().setControlMode(
-                  ControlMode.imu,
+                _ModeChip(
+                  label: 'IMU',
+                  icon: Icons.sensors,
+                  color: Colors.deepPurple,
+                  mode: ControlMode.imu,
+                  selected: provider.selectedMode,
+                  onTap: () => context.read<DronProvider>().setControlMode(
+                    ControlMode.imu,
+                  ),
                 ),
-              ),
+              ],
             ],
           ),
         ],
@@ -820,6 +853,16 @@ class _StartFlightButton extends StatelessWidget {
           onPressed: enabled
               ? () {
                   requestFullscreenEZ();
+                  if (provider.droneConnectionMode ==
+                      DroneConnectionMode.tello) {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const TelloFlightScreen(),
+                      ),
+                    );
+                    return;
+                  }
                   switch (provider.selectedMode) {
                     case ControlMode.classic:
                       Navigator.push(
@@ -1061,7 +1104,7 @@ class _HelpSection extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppColors.background,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: color.withOpacity(0.5), width: 1.5),
+        border: Border.all(color: color.withValues(alpha: 0.5), width: 1.5),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

@@ -16,8 +16,17 @@ class Constants {
     // Mission
   static const String topicUploadMission = 'mobileFlutter/groundStation/uploadMission';
   static const String topicStartMission  = 'mobileFlutter/groundStation/startMission';
+    // Tello
+  static const String topicFlip = 'mobileFlutter/groundStation/flip';
+  static const String topicDance = 'mobileFlutter/groundStation/dance';
+  static const String topicFollowMode = 'mobileFlutter/groundStation/followMode';
+    // Camera
+  static const String topicSetCamera = 'mobileFlutter/groundStation/setCamera';
+  static const String topicSetZoom   = 'mobileFlutter/groundStation/zoom';
+  static const String topicDetectionMode = 'mobileFlutter/groundStation/detectionMode';
+    // Control de vuelo
+  static const String topicSetMode   = 'mobileFlutter/groundStation/setMode';
 
-  
 
   // Topics escuchar
   static const String topicConnected    = 'groundStation/mobileFlutter/connected';

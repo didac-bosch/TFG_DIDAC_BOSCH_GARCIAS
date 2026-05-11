@@ -28,7 +28,7 @@ enum ControlMode { classic, voice, imu }
 enum DetectionMode { all, person, none }
 
 // Modos de conexión al dron
-enum DroneConnectionMode { ardupilot, sitl }
+enum DroneConnectionMode { ardupilot, sitl, tello }
 
 //flag de control
 bool _waitingForConnect = false;
@@ -335,21 +335,24 @@ class DronProvider extends ChangeNotifier {
   // Nivel de zoom actual (1.0 a 5.0)
   double zoomLevel = 1.0;
 
+  //---------- TELLO -------------
+  double? telloTempC;
+  int? telloWifi;
+  int? telloFlightTime;
+
+  bool isFollowMode = false;
+
+  // metodos
+
   void switchCamera() {
     cameraIndex = cameraIndex == 1 ? 0 : 1;
-    _mqtt.publish(
-      'mobileFlutter/groundStation/setCamera',
-      cameraIndex.toString(),
-    );
+    _mqtt.publish(Constants.topicSetCamera, cameraIndex.toString());
     notifyListeners();
   }
 
   void setZoom(double value) {
     zoomLevel = value.clamp(1.0, 5.0);
-    _mqtt.publish(
-      'mobileFlutter/groundStation/zoom',
-      zoomLevel.toStringAsFixed(1),
-    );
+    _mqtt.publish(Constants.topicSetZoom, zoomLevel.toStringAsFixed(1));
     notifyListeners();
   }
 
@@ -618,8 +621,9 @@ class DronProvider extends ChangeNotifier {
       final modeStr = switch (droneConnectionMode) {
         DroneConnectionMode.ardupilot => 'ardupilot',
         DroneConnectionMode.sitl => 'sitl',
+        DroneConnectionMode.tello => 'tello',
       };
-      _mqtt.publish('mobileFlutter/groundStation/setMode', modeStr);
+      _mqtt.publish(Constants.topicSetMode, modeStr);
 
       // 2. Flush window: dejamos pasar los retained messages del broker
       //    (_waitingForConnect = false - serán ignorados en _handleMessage)
@@ -627,6 +631,14 @@ class DronProvider extends ChangeNotifier {
 
       // 3. A partir de aquí sí esperamos el connected real
       _waitingForConnect = true;
+      if (droneConnectionMode == DroneConnectionMode.tello) {
+        await Future.delayed(const Duration(milliseconds: 300));
+        _waitingForConnect = false;
+        isConnected = true;
+        isLoading = false;
+        message = 'Connection established!';
+        notifyListeners();
+      }
 
       // 4. Timeout de conexión: 20 s
       Timer(const Duration(seconds: 20), () {
@@ -638,10 +650,7 @@ class DronProvider extends ChangeNotifier {
         }
       });
 
-      _mqtt.publish(
-        'mobileFlutter/groundStation/setCamera',
-        cameraIndex.toString(),
-      );
+      _mqtt.publish(Constants.topicSetCamera, cameraIndex.toString());
 
       // 5. Comando connect
       _mqtt.publish(Constants.topicConnect, 'connect');
@@ -699,12 +708,18 @@ class DronProvider extends ChangeNotifier {
 
   // -----------------------DESPEGAR----------------------------------
   Future<void> takeOff() async {
-    if (!isConnected || !isArmed) return;
+    debugPrint(
+      '[TAKEOFF] isConnected=$isConnected isArmed=$isArmed mode=$droneConnectionMode',
+    );
+    final needsArm = droneConnectionMode != DroneConnectionMode.tello;
+    if (!isConnected || (needsArm && !isArmed)) {
+      debugPrint('[TAKEOFF] BLOQUEADO');
+      return;
+    }
+    debugPrint('[TAKEOFF] Publicando ${Constants.topicTakeoff}');
     isLoading = true;
     message = 'Taking off...';
     notifyListeners();
-
-    // Envía altitud y velocidad juntos en el mismo payload
     final payload = '${takeoffAltitude.toInt()}:$flightSpeed';
     _mqtt.publish(Constants.topicTakeoff, payload);
     isLoading = false;
@@ -751,7 +766,7 @@ class DronProvider extends ChangeNotifier {
       DetectionMode.person => 'person',
       DetectionMode.none => 'none',
     };
-    _mqtt.publish('mobileFlutter/groundStation/detectionMode', modeStr);
+    _mqtt.publish(Constants.topicDetectionMode, modeStr);
     notifyListeners();
   }
 
@@ -778,6 +793,29 @@ class DronProvider extends ChangeNotifier {
     message = '!Video saved!';
     notifyListeners();
   }
+
+  // Métodos tello
+  void sendFlip(String dir) {
+    if (!isConnected || !isFlying) return;
+    _mqtt.publish(Constants.topicFlip, dir);
+  }
+
+  void sendDance() {
+    if (!isConnected || !isFlying) return;
+    _mqtt.publish(Constants.topicDance, 'dance');
+  }
+
+  void toggleFollowMode() {
+    if (!isConnected || !isFlying) return;
+    isFollowMode = !isFollowMode;
+    _mqtt.publish(Constants.topicFollowMode, isFollowMode ? 'true' : 'false');
+    notifyListeners();
+  }
+
+  //void sendTelloCommand(String command) {
+  //if (!isConnected || !isFlying) return;
+  //_mqtt.publish(Constants.topicTelloCommand, command);
+  //}
 
   // -----------------------HANDLER DE MENSAJES----------------------------------
   void _handleMessage(String topic, String payload) {
