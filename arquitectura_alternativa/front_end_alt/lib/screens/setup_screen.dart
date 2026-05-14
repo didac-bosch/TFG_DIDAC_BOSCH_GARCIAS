@@ -1058,6 +1058,50 @@ void _showHelpSheet(BuildContext context) {
                 ),
               ],
             ),
+            const SizedBox(height: 16),
+            const _HelpSection(
+              icon: Icons.flight,
+              title: 'Tello (DJI)',
+              color: Colors.lightBlue,
+              items: [
+                _HelpItem(
+                  Icons.wifi,
+                  'Connect phone to Tello Wi-Fi before launching the app',
+                ),
+                _HelpItem(
+                  Icons.sports_esports,
+                  'Dual joystick — left: Throttle/Yaw · right: Pitch/Roll',
+                ),
+                _HelpItem(
+                  Icons.flight_takeoff,
+                  'TAKEOFF — arms and takes off automatically (~50 cm)',
+                ),
+                _HelpItem(
+                  Icons.flight_land,
+                  'LAND — smooth descent and motor stop',
+                ),
+                _HelpItem(
+                  Icons.tune,
+                  'MODES — opens Flip / Dance / Follow overlay panel',
+                ),
+                _HelpItem(
+                  Icons.flip_camera_android,
+                  'Flip: tap a direction arrow while flying to execute the flip',
+                ),
+                _HelpItem(
+                  Icons.music_note,
+                  'Dance: sends a preset choreography sequence',
+                ),
+                _HelpItem(
+                  Icons.directions_run,
+                  'Follow: activates person-tracking mode (tap STOP to deactivate)',
+                ),
+                _HelpItem(
+                  Icons.warning_amber,
+                  'Voice and IMU modes are not available for Tello',
+                ),
+              ],
+            ),
             const SizedBox(height: 28),
             SizedBox(
               width: double.infinity,
