@@ -21,52 +21,47 @@ from simple_pid import PID
 from dronLink.Dron import Dron
 from TelloLink.Tello import TelloDron
 
-
 # ============================================================
 # CONSTANTES
 # ============================================================
 
-BROKER     = 'broker.hivemq.com'
-PORT_MQTT  = 1883
+BROKER = 'broker.hivemq.com'
+PORT_MQTT = 1883
 SIGNAL_URL = 'wss://dronseetac.upc.edu:8105/ws'
 
-MY_ID     = 'python'
+MY_ID = 'python'
 REMOTE_ID = 'browser'
-
 
 # ============================================================
 # CONFIGURACION DINAMICA
 # ============================================================
 
-flight_mode  = 'ardupilot'   # 'ardupilot' | 'sitl' | 'tello'
+flight_mode = 'ardupilot'  # 'ardupilot' | 'sitl' | 'tello'
 camera_index = 1
-
 
 # ============================================================
 # ESTADO GLOBAL
 # ============================================================
 
-_monitoring       = False
-_pc               = None
+_monitoring = False
+_pc = None
+_webrtc_running = False
 telemetry_channel = None
-_camera_track     = None
-_pending_mission  = None
-_pending_actions  = []
+_camera_track = None
+_pending_mission = None
+_pending_actions = []
 
-# ── Tello: modos especiales
 _follow_mode = False
-
 
 # ============================================================
 # CALIBRACION CAMARA
 # ============================================================
 
-CALIB_FILE  = 'calibration_data_px.yaml'
-cam_matrix  = None
-dist_coefs  = None
+CALIB_FILE = 'calibration_data_px.yaml'
+cam_matrix = None
+dist_coefs = None
 new_cam_mtx = None
-roi_crop    = None
-
+roi_crop = None
 
 def load_calibration():
     global cam_matrix, dist_coefs, new_cam_mtx, roi_crop
@@ -82,9 +77,7 @@ def load_calibration():
     roi_crop = roi
     print(f'[INFO] Calibracion cargada desde "{CALIB_FILE}"')
 
-
 load_calibration()
-
 
 # ============================================================
 # MODELO YOLO (solo ArduPilot/SITL)
@@ -93,21 +86,17 @@ load_calibration()
 model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
 model.eval()
 
-
 # ============================================================
 # LOOP ASYNCIO
 # ============================================================
 
 loop = asyncio.new_event_loop()
 
-
 def _start_loop(lp):
     asyncio.set_event_loop(lp)
     lp.run_forever()
 
-
 threading.Thread(target=_start_loop, args=(loop,), daemon=True).start()
-
 
 # ============================================================
 # MQTT callbacks
@@ -129,36 +118,32 @@ def process_telemetry_info(telemetry_info):
         try:
             loop.call_soon_threadsafe(telemetry_channel.send, payload)
         except Exception as e:
-            print(f'Error enviando telemetria: {e}')
+            print(f'Error enviando telemetría: {e}')
 
 
 def process_tello_telemetry():
     global telemetry_channel
     while flight_mode == 'tello' and tello.state != 'disconnected':
         try:
-            vx = getattr(tello, 'vx_cm_s', 0) or 0
-            vy = getattr(tello, 'vy_cm_s', 0) or 0
+            vx = getattr(tello, 'vx_cms', 0) or 0
+            vy = getattr(tello, 'vy_cms', 0) or 0
             payload = json.dumps({
-                'lat':        0.0,
-                'lon':        0.0,
-                'alt':        (getattr(tello, 'height_cm', 0) or 0) / 100.0,
-                'speed':      (vx**2 + vy**2)**0.5 / 100.0,
-                'bat':        getattr(tello, 'battery_pct', 0) or 0,
-                'heading':    getattr(tello, 'yaw_deg', 0) or 0,
-                'vx':         vx / 100.0,
-                'vy':         vy / 100.0,
-                'state':      tello.state,
-                'mode':       'TELLO',
-                'temp':       getattr(tello, 'temp_c', None),
-                'wifi':       getattr(tello, 'wifi', None),
-                'flightTime': getattr(tello, 'flight_time_s', None),
+                'lat':              0.0,
+                'lon':              0.0,
+                'alt':              (getattr(tello, 'height_cm', 0) or 0) / 100.0,
+                'groundSpeed':      (vx**2 + vy**2)**0.5 / 100.0,
+                'batteryremaining': getattr(tello, 'battery_pct', 0) or 0,
+                'heading':          getattr(tello, 'yaw_deg', 0) or 0,
+                'vx':               vx / 100.0,
+                'vy':               vy / 100.0,
+                'state':            tello.state,
+                'flightMode':       'TELLO',
             })
             if telemetry_channel is not None and telemetry_channel.readyState == 'open':
                 loop.call_soon_threadsafe(telemetry_channel.send, payload)
         except Exception as e:
             print(f'[TELLO TEL] Error: {e}')
         time.sleep(0.2)
-
 
 def monitor_arm_state():
     global _monitoring
@@ -175,7 +160,6 @@ def monitor_arm_state():
         time.sleep(1)
     _monitoring = False
 
-
 def handle_joystick(data_str):
     try:
         data = json.loads(data_str)
@@ -186,7 +170,6 @@ def handle_joystick(data_str):
 
         # TELLO
         if flight_mode == 'tello':
-            # Si follow mode está activo, el PID tiene el control
             if _follow_mode:
                 return
             if tello.state != 'flying':
@@ -197,7 +180,6 @@ def handle_joystick(data_str):
             fwd_back   = to_rc(ry) if abs(ry) >= threshold else 0
             up_down    = to_rc(ly) if abs(ly) >= threshold else 0
             yaw        = to_rc(lx) if abs(lx) >= threshold else 0
-            # Siempre enviar, incluyendo (0,0,0,0) para frenar al soltar
             tello._tello.send_rc_control(left_right, fwd_back, up_down, yaw)
             return
 
@@ -219,7 +201,6 @@ def handle_joystick(data_str):
 
     except Exception as e:
         print(f'Error joystick: {e}')
-
 
 def on_message(client, userdata, message):
     global _pc, _camera_track, flight_mode, camera_index, _follow_mode
@@ -270,14 +251,14 @@ def on_message(client, userdata, message):
                     threading.Thread(target=process_tello_telemetry, daemon=True).start()
                 else:
                     print(f'[TELLO] Recuperacion de sesion - estado: "{tello.state}"')
-                    if _pc is not None:
-                        try:
-                            asyncio.run_coroutine_threadsafe(_pc.close(), loop)
-                        except Exception:
-                            pass
-                        _pc = None
-                        _camera_track = None
-                        telemetry_channel = None
+                if _pc is not None:
+                    try:
+                        asyncio.run_coroutine_threadsafe(_pc.close(), loop)
+                    except Exception:
+                        pass
+                    _pc = None
+                    _camera_track = None
+                    telemetry_channel = None
 
                 client.publish('groundStation/mobileFlutter/connected', 'connected')
                 time.sleep(0.3)
@@ -289,10 +270,10 @@ def on_message(client, userdata, message):
             # ARDUPILOT / SITL
             if flight_mode == 'ardupilot':
                 conn_str = 'com7'
-                baud     = 57600
+                baud = 57600
             elif flight_mode == 'sitl':
                 conn_str = 'tcp:127.0.0.1:5763'
-                baud     = 115200
+                baud = 115200
             else:
                 print(f'[ERROR] Modo "{flight_mode}" no disponible.')
                 client.publish('groundStation/mobileFlutter/disconnected', f'mode_unavailable:{flight_mode}')
@@ -344,10 +325,10 @@ def on_message(client, userdata, message):
             if dron.state in ('armed', 'flying', 'returning'):
                 client.publish('groundStation/mobileFlutter/armed', 'armed')
                 print('Session recovery: re-publicado armed')
-            if dron.state in ('flying', 'returning'):
-                time.sleep(0.1)
-                client.publish('groundStation/mobileFlutter/flying', 'flying')
-                print('Session recovery: re-publicado flying')
+                if dron.state in ('flying', 'returning'):
+                    time.sleep(0.1)
+                    client.publish('groundStation/mobileFlutter/flying', 'flying')
+                    print('Session recovery: re-publicado flying')
 
             asyncio.run_coroutine_threadsafe(webrtc_client(), loop)
 
@@ -382,7 +363,7 @@ def on_message(client, userdata, message):
         if dron.state in ('armed', 'flying'):
             parts_payload = message.payload.decode().split(':')
             altitude = int(parts_payload[0])
-            speed    = float(parts_payload[1]) if len(parts_payload) > 1 else dron.navSpeed
+            speed = float(parts_payload[1]) if len(parts_payload) > 1 else dron.navSpeed
             def despegar():
                 print(f'Despegando a {altitude}m a {speed}m/s...')
                 dron.navSpeed = speed
@@ -449,7 +430,7 @@ def on_message(client, userdata, message):
             zoom_val = max(1.0, min(zoom_val, 10.0))
             if _camera_track is not None:
                 _camera_track.zoom_factor = zoom_val
-                print(f'Zoom: {zoom_val}x')
+            print(f'Zoom: {zoom_val}x')
         except ValueError:
             print('[WARN] Zoom: valor invalido')
 
@@ -492,7 +473,7 @@ def on_message(client, userdata, message):
         mode = message.payload.decode()
         if _camera_track is not None:
             _camera_track.detection_mode = mode
-            _camera_track.detecciones    = []
+            _camera_track.detecciones = []
         print(f'Modo deteccion YOLO: {mode}')
 
     # DISCONNECT
@@ -510,7 +491,7 @@ def on_message(client, userdata, message):
                         asyncio.run_coroutine_threadsafe(_pc.close(), loop)
                     except Exception:
                         pass
-                    _pc = None
+                _pc = None
                 _camera_track = None
                 print('[TELLO] Desconectado!')
                 client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
@@ -530,7 +511,7 @@ def on_message(client, userdata, message):
                     asyncio.run_coroutine_threadsafe(_pc.close(), loop)
                 except Exception as e:
                     print(f'Error cerrando PeerConnection: {e}')
-                _pc = None
+            _pc = None
             _camera_track = None
             print('Dron desconectado!')
             client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
@@ -540,13 +521,13 @@ def on_message(client, userdata, message):
     if command == 'uploadMission':
         global _pending_mission, _pending_actions
         try:
-            data        = json.loads(message.payload.decode())
+            data = json.loads(message.payload.decode())
             wp_data     = data.get('waypoints', [])
             takeoff_alt = data.get('takeoffAlt', 5)
             speed       = data.get('speed', dron.navSpeed)
 
             dronlink_waypoints = []
-            actions            = []
+            actions = []
 
             for wp in wp_data:
                 dronlink_waypoints.append({
@@ -636,7 +617,6 @@ def on_message(client, userdata, message):
 
         threading.Thread(target=run_mission, daemon=True).start()
 
-
 # ============================================================
 # WEBRTC - Video Track
 # ============================================================
@@ -651,7 +631,6 @@ class CameraVideoTrack(VideoStreamTrack):
         self.correct_lens   = cam_matrix is not None
         self.cap            = None
 
-        # ── Follow mode (Haar cascade, sin dependencias extra)
         self._face_cascade = cv2.CascadeClassifier(
             cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
         )
@@ -676,7 +655,7 @@ class CameraVideoTrack(VideoStreamTrack):
         if not self.correct_lens:
             return frame
         undistorted = cv2.undistort(frame, cam_matrix, dist_coefs, None, new_cam_mtx)
-        x, y, w, h  = roi_crop
+        x, y, w, h = roi_crop
         if w > 0 and h > 0:
             undistorted = undistorted[y:y + h, x:x + w]
         return undistorted
@@ -697,7 +676,7 @@ class CameraVideoTrack(VideoStreamTrack):
 
     def _run_follow(self, frame):
         """Tracking de cara con Haar cascade + PIDs. Frame en RGB."""
-        h, w = frame.shape[:2]
+        h, w   = frame.shape[:2]
         ref_x, ref_y = w // 2, h // 2
 
         gray  = cv2.cvtColor(frame, cv2.COLOR_RGB2GRAY)
@@ -710,17 +689,14 @@ class CameraVideoTrack(VideoStreamTrack):
                 tello._tello.send_rc_control(0, 0, 0, 0)
             return frame
 
-        # Cara más grande = la más cercana
         x, y, fw, fh = max(faces, key=lambda f: f[2] * f[3])
-        cx        = x + fw // 2
-        cy        = y + fh // 2
+        cx = x + fw // 2
+        cy = y + fh // 2
         face_area = fw * fh
 
-        # Área objetivo: ~12% del frame ≈ 1.8-2m
         if self._target_face_area == 0:
             self._target_face_area = int(w * h * 0.12)
 
-        # Promedio móvil de 10 frames para suavizar el área
         self._area_history.append(face_area)
         if len(self._area_history) > 10:
             self._area_history.pop(0)
@@ -730,7 +706,6 @@ class CameraVideoTrack(VideoStreamTrack):
         yoff     = ref_y - cy
         area_err = smooth_area - self._target_face_area
 
-        # Zona muerta del 25%: no reaccionar a variaciones pequeñas de distancia
         dead_zone = self._target_face_area * 0.25
         if abs(area_err) < dead_zone:
             area_err = 0
@@ -742,23 +717,20 @@ class CameraVideoTrack(VideoStreamTrack):
         if tello.state == 'flying':
             tello._tello.send_rc_control(0, pitch, throttle, yaw)
 
-        # Anotación sobre el frame
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         cv2.rectangle(frame_bgr, (x, y), (x + fw, y + fh), (250, 150, 0), 2)
         cv2.circle(frame_bgr, (ref_x, ref_y), 10, (0, 255, 0), 1)
-        cv2.putText(frame_bgr, f'FOLLOW  Y:{yaw:+.0f} T:{throttle:+.0f} P:{pitch:+.0f}',
+        cv2.putText(frame_bgr, f'FOLLOW Y:{yaw:+.0f} T:{throttle:+.0f} P:{pitch:+.0f}',
                     (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (250, 150, 0), 2)
         return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
 
     async def recv(self):
         self.frame_count += 1
 
-        # ── Obtener frame según plataforma
         if flight_mode == 'tello':
             frame = tello.get_frame()
             if frame is None:
                 frame = np.zeros((480, 640, 3), dtype=np.uint8)
-            # frame ya viene en RGB desde TelloDron
         else:
             ret, frame = self.cap.read()
             if not ret:
@@ -769,15 +741,12 @@ class CameraVideoTrack(VideoStreamTrack):
         frame = self._apply_zoom(frame)
         frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-        # ── Follow mode: tiene prioridad, skip YOLO
         if flight_mode == 'tello' and _follow_mode:
             frame = self._run_follow(frame)
-            vf           = VideoFrame.from_ndarray(frame, format='rgb24')
-            vf.pts       = self.frame_count
-            vf.time_base = fractions.Fraction(1, 30)
+            vf = VideoFrame.from_ndarray(frame, format='rgb24')
+            vf.pts, vf.time_base = self.frame_count, fractions.Fraction(1, 30)
             return vf
 
-        # ── YOLO solo en ArduPilot/SITL
         if flight_mode != 'tello' and self.frame_count % 25 == 0 and self.detection_mode != 'none':
             results = model(frame)
             self.detecciones = []
@@ -789,11 +758,9 @@ class CameraVideoTrack(VideoStreamTrack):
                     continue
                 self.detecciones.append((x1, y1, x2, y2, label, confidence))
 
-        # En Tello sin follow: limpiar detecciones
         if self.detection_mode == 'none' or flight_mode == 'tello':
             self.detecciones = []
 
-        # ── Dibujar detecciones
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         color = (0, 255, 0) if self.detection_mode == 'all' else (0, 150, 255)
         for (x1, y1, x2, y2, label, confidence) in self.detecciones:
@@ -806,23 +773,33 @@ class CameraVideoTrack(VideoStreamTrack):
         cv2.putText(frame_bgr, ts, (10, 30),
                     cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-        frame        = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        vf           = VideoFrame.from_ndarray(frame, format='rgb24')
-        vf.pts       = self.frame_count
-        vf.time_base = fractions.Fraction(1, 30)
+        frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        vf = VideoFrame.from_ndarray(frame, format='rgb24')
+        vf.pts, vf.time_base = self.frame_count, fractions.Fraction(1, 30)
         return vf
 
-
 # ============================================================
-# WEBRTC - senalizacion
+# WEBRTC - señalización
 # ============================================================
 
 async def webrtc_client():
-    global _pc, telemetry_channel, _camera_track
+    global _pc, telemetry_channel, _camera_track, _webrtc_running
+
+    if _webrtc_running:
+        print('[WEBRTC] Ya hay una sesion activa, ignorando nueva llamada.')
+        return
+    _webrtc_running = True
+
+    if _pc is not None:
+        try:
+            await _pc.close()
+        except Exception:
+            pass
+        _pc = None
 
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode    = ssl.CERT_NONE
+    ssl_ctx.verify_mode = ssl.CERT_NONE
 
     print(f'Conectando al servidor de senalizacion: {SIGNAL_URL}')
 
@@ -830,6 +807,18 @@ async def webrtc_client():
         async with websockets.connect(SIGNAL_URL, ssl=ssl_ctx) as ws:
             await ws.send(MY_ID)
             print(f'Identificado como "{MY_ID}", esperando a "{REMOTE_ID}"...')
+
+            await ws.send(json.dumps({
+                'target': REMOTE_ID,
+                'type': 'ice_config',
+                'iceServers': [
+                    {'urls': 'stun:stun.l.google.com:19302'},
+                    {'urls': 'stun:stun1.l.google.com:19302'},
+                ],
+            }))
+            print('[WEBRTC] ice_config enviado a Flutter')
+
+            await asyncio.sleep(0.8)
 
             _pc = RTCPeerConnection()
 
@@ -845,7 +834,7 @@ async def webrtc_client():
                 if candidate:
                     await ws.send(json.dumps({
                         'target': REMOTE_ID,
-                        'type':   'candidate',
+                        'type': 'candidate',
                         'candidate': {
                             'candidate':     candidate.candidate,
                             'sdpMid':        candidate.sdpMid,
@@ -855,11 +844,11 @@ async def webrtc_client():
                 else:
                     await ws.send(json.dumps({
                         'target': REMOTE_ID,
-                        'type':   'candidate',
+                        'type': 'candidate',
                         'candidate': None,
                     }))
 
-            track         = CameraVideoTrack(cam_idx=camera_index)
+            track = CameraVideoTrack(cam_idx=camera_index)
             _camera_track = track
             _pc.addTrack(track)
 
@@ -867,8 +856,8 @@ async def webrtc_client():
             await _pc.setLocalDescription(offer)
             await ws.send(json.dumps({
                 'target': REMOTE_ID,
-                'type':   'offer',
-                'offer':  {
+                'type': 'offer',
+                'offer': {
                     'sdp':  _pc.localDescription.sdp,
                     'type': _pc.localDescription.type,
                 },
@@ -901,20 +890,21 @@ async def webrtc_client():
 
     except Exception as e:
         print(f'Error en webrtc_client: {e}')
-
+    finally:
+        _webrtc_running = False
 
 # ============================================================
 # ARRANQUE
 # ============================================================
 
-dron           = Dron()
-dron.navSpeed  = 3.0
+dron = Dron()
+dron.navSpeed = 3.0
 dron._conn_str = None
 
 tello = TelloDron()
 
 client_name = 'groundStation' + str(random.randint(1000, 9000))
-client      = mqtt.Client(client_name)
+client = mqtt.Client(client_name)
 client.on_connect = on_connect
 client.on_message = on_message
 
