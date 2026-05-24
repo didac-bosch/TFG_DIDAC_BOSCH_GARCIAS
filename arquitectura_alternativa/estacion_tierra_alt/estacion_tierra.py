@@ -17,7 +17,6 @@ from aiortc.sdp import candidate_from_sdp
 from av import VideoFrame
 import torch
 from simple_pid import PID
-from collections import deque
 
 from dronLink.Dron import Dron
 from TelloLink.Tello import TelloDron
@@ -26,43 +25,44 @@ from TelloLink.Tello import TelloDron
 # CONSTANTES
 # ============================================================
 
-BROKER = 'broker.hivemq.com'
-PORT_MQTT = 1883
+BROKER     = 'broker.hivemq.com'
+PORT_MQTT  = 1883
 SIGNAL_URL = 'wss://dronseetac.upc.edu:8105/ws'
 
-MY_ID = 'python'
+MY_ID     = 'python'
 REMOTE_ID = 'browser'
 
 # ============================================================
 # CONFIGURACION DINAMICA
 # ============================================================
 
-flight_mode = 'ardupilot'  # 'ardupilot' | 'sitl' | 'tello'
+flight_mode  = 'ardupilot'   # 'ardupilot' | 'sitl' | 'tello'
 camera_index = 1
 
 # ============================================================
 # ESTADO GLOBAL
 # ============================================================
 
-_monitoring = False
-_pc = None
-_webrtc_running = False
+_monitoring       = False
+_pc               = None
+_webrtc_running   = False
 telemetry_channel = None
-_camera_track = None
-_pending_mission = None
-_pending_actions = []
-
-_follow_mode = False
+_camera_track     = None
+_pending_mission  = None
+_pending_actions  = []
+_follow_mode      = False
+_orbit_active     = False
+_orbit_thread     = None
 
 # ============================================================
 # CALIBRACION CAMARA
 # ============================================================
 
-CALIB_FILE = 'calibration_data_px.yaml'
-cam_matrix = None
-dist_coefs = None
+CALIB_FILE  = 'calibration_data_px.yaml'
+cam_matrix  = None
+dist_coefs  = None
 new_cam_mtx = None
-roi_crop = None
+roi_crop    = None
 
 def load_calibration():
     global cam_matrix, dist_coefs, new_cam_mtx, roi_crop
@@ -71,21 +71,31 @@ def load_calibration():
         return
     with open(CALIB_FILE) as f:
         data = yaml.safe_load(f)
-    cam_matrix = np.array(data['camera_matrix'])
-    dist_coefs = np.array(data['distortion_coefficients'])
-    h, w = 480, 640
-    new_cam_mtx, roi = cv2.getOptimalNewCameraMatrix(cam_matrix, dist_coefs, (w, h), 1, (w, h))
+    cam_matrix  = np.array(data['camera_matrix'])
+    dist_coefs  = np.array(data['distortion_coefficients'])
+    h, w        = 480, 640
+    new_cam_mtx, roi = cv2.getOptimalNewCameraMatrix(
+        cam_matrix, dist_coefs, (w, h), 1, (w, h))
     roi_crop = roi
     print(f'[INFO] Calibracion cargada desde "{CALIB_FILE}"')
 
 load_calibration()
 
 # ============================================================
-# MODELO YOLO (solo ArduPilot/SITL)
+# MODELO YOLO 
 # ============================================================
+
+DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+print(f'[INFO] YOLO usando: {DEVICE}')
 
 model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
 model.eval()
+if DEVICE == 'cuda':
+    model = model.cuda()
+
+# modelo yolo para tello (detecta poses)
+from ultralytics import YOLO
+pose_model = YOLO('yolov8n-pose.pt')
 
 # ============================================================
 # LOOP ASYNCIO
@@ -100,316 +110,419 @@ def _start_loop(lp):
 threading.Thread(target=_start_loop, args=(loop,), daemon=True).start()
 
 # ============================================================
-# SEGUIMIENTO - FollowController
+# FOLLOW CONTROLLER
 # ============================================================
 
+
 class FollowController:
-    """
-    Controlador de modo sígueme para Tello.
 
-    Arquitectura de mejoras respecto al código original:
-    ─────────────────────────────────────────────────────
-    1. DETECCIÓN HÍBRIDA: YOLOv5 para re-identificar a la persona cada
-       N frames + tracker KCF/CSRT de OpenCV entre detecciones.
-       → Reduce latencia de ~33 ms/frame a ~5 ms entre ciclos YOLO.
+    FRAME_W = 960
+    FRAME_H = 720
 
-    2. SELECCIÓN DE TARGET PERSISTENTE: se recuerda la bbox del frame
-       anterior y se elige el bbox con mayor IoU (en vez del más grande),
-       evitando saltos de target cuando hay varias personas en escena.
+    TARGET_RATIO        = 0.30
+    RATIO_DEADZONE      = 0.03
 
-    3. PIDs INDEPENDIENTES CON DEAD-ZONE Y ANTI-WINDUP:
-       • Yaw   (error horizontal): mantiene la persona centrada X.
-       • Pitch (fb velocity):      mantiene distancia mediante ratio area.
-       • Throttle (up/down):       mantiene la persona centrada Y.
-       • Roll                      desactivado (Tello vuela frontalmente).
-       Dead-zone elimina oscilaciones cuando el error es pequeño.
-       Anti-windup: ya incluido en simple_pid con output_limits.
+    X_DEADZONE_PX       = 35
+    Y_DEADZONE_PX       = 60
 
-    4. RATE LIMITING: los comandos RC se envían a 20 Hz exactos con un
-       timer dedicado, separando la lógica de visión del control.
-       Antes se enviaban a la frecuencia del recv() de WebRTC (~30fps
-       pero solo cada 3 frames = 10 Hz irregular).
+    YOLO_FRAME_STRIDE   = 8
+    EMA_ALPHA           = 0.35
+    TARGET_LOST_GRACE_S = 1.5
 
-    5. KALMAN FILTER en (cx, cy, area) para suavizar la posición del
-       target y evitar que el drone reaccione a detecciones ruidosas.
+    CONF_THRESHOLD      = 0.45
+    MIN_BBOX_W          = 30
+    MIN_BBOX_H          = 50
 
-    6. TIMEOUT DE TARGET: si no se detecta persona durante >1 s se envía
-       RC=0 y se resetea el tracker, evitando que el drone salga volando.
+    MAX_YAW             = 40
+    MAX_THROTTLE        = 30
+    MAX_FB              = 35
 
-    7. THREAD SEGURO: visión y RC en hilos separados con lock y variables
-       compartidas, sin bloquear el hilo WebRTC.
-    """
+    STOP_DISTANCE_CM    = 40.0
+    STOP_DEADZONE_CM    = 8.0       # ±8 cm zona muerta ToF
+    TOF_ACTIVATION_RATIO = 0.10     
+    TOF_EMA_ALPHA       = 0.20      # suavizado agresivo señal ToF
 
-    # ── Parámetros de frame ───────────────────────────────────────────
-    FRAME_W      = 640
-    FRAME_H      = 480
-    REF_X        = FRAME_W // 2
-    REF_Y        = FRAME_H // 2
-    FRAME_AREA   = FRAME_W * FRAME_H
+    PID_YAW_KP,     PID_YAW_KI,     PID_YAW_KD     = -0.20, -0.003, -0.05
+    PID_THR_KP,     PID_THR_KI,     PID_THR_KD     = 0.25, 0.002, 0.04  
+    PID_FB_BBOX_KP, PID_FB_BBOX_KI, PID_FB_BBOX_KD = 300.0,  0.0,   50.0
+    PID_FB_TOF_KP,  PID_FB_TOF_KI,  PID_FB_TOF_KD  =  0.10,  0.001,  0.02  # KD reducido
 
-    # ── Ratios de área objetivo ───────────────────────────────────────
-    TARGET_RATIO     = 0.10
-    RATIO_DEADZONE   = 0.02
-    X_DEADZONE_PX    = 30
-    Y_DEADZONE_PX    = 40
-
-    # ── YOLO ──────────────────────────────────────────────────────────
-    YOLO_EVERY       = 5
-    TARGET_TIMEOUT   = 1.2
-
-    # ── Límites RC ────────────────────────────────────────────────────
-    MAX_YAW          = 40
-    MAX_THROTTLE     = 30
-    MAX_FB           = 40
-
-    # ── PID gains ─────────────────────────────────────────────────────
-    PID_YAW_KP, PID_YAW_KI, PID_YAW_KD = 0.08, 0.001, 0.02
-    PID_THR_KP, PID_THR_KI, PID_THR_KD = 0.08, 0.001, 0.02
-    PID_FB_KP,  PID_FB_KI,  PID_FB_KD  = 120.0, 2.0, 8.0
+    SEARCH_LOST_S   = 2.0
+    SEARCH_YAW      = 20
+    SEARCH_SPIN_S   = 6.0
 
     def __init__(self, tello_ref):
         self._tello = tello_ref
 
         self._pid_yaw = PID(
             self.PID_YAW_KP, self.PID_YAW_KI, self.PID_YAW_KD,
-            setpoint=0,
-            output_limits=(-self.MAX_YAW, self.MAX_YAW)
-        )
+            setpoint=0, output_limits=(-self.MAX_YAW, self.MAX_YAW))
         self._pid_thr = PID(
             self.PID_THR_KP, self.PID_THR_KI, self.PID_THR_KD,
-            setpoint=0,
-            output_limits=(-self.MAX_THROTTLE, self.MAX_THROTTLE)
-        )
-        self._pid_fb = PID(
-            self.PID_FB_KP, self.PID_FB_KI, self.PID_FB_KD,
-            setpoint=0,
-            output_limits=(-self.MAX_FB, self.MAX_FB)
-        )
+            setpoint=0, output_limits=(-self.MAX_THROTTLE, self.MAX_THROTTLE))
+        self._pid_fb_bbox = PID(
+            self.PID_FB_BBOX_KP, self.PID_FB_BBOX_KI, self.PID_FB_BBOX_KD,
+            setpoint=0, output_limits=(-self.MAX_FB, self.MAX_FB))
+        self._pid_fb_tof = PID(
+            self.PID_FB_TOF_KP, self.PID_FB_TOF_KI, self.PID_FB_TOF_KD,
+            setpoint=0, output_limits=(-self.MAX_FB, self.MAX_FB))
 
-        self._tracker      = None
-        self._tracker_bbox = None
-        self._last_det_t   = 0.0
-        self._frame_count  = 0
-        self._prev_bbox    = None
+        self._pitch_source_last = 'none'
 
-        self._kf           = self._build_kalman()
-        self._kf_init      = False
+        self._sdk_lock    = threading.Lock()
+        self.front_tof_cm = -1.0
+        self._tof_ema     = -1.0    # EMA interno del ToF
 
-        self._lock         = threading.Lock()
-        self._rc           = (0, 0, 0, 0)
-        self._target_lost  = True
+        self._rc_lock = threading.Lock()
+        self._rc      = [0, 0, 0, 0]
 
-        self._rc_thread    = threading.Thread(target=self._rc_loop, daemon=True)
-        self._active       = True
+        self._frame_lock  = threading.Lock()
+        self._debug_frame = None
+
+        # Inicializar status para telemetría (evita AttributeError antes del primer frame)
+        self._follow_status = 'waiting'
+        self._tof_display   = -1.0
+
+        self._active = True
+
+        self._tof_thread = threading.Thread(target=self._tof_loop, daemon=True)
+        self._tof_thread.start()
+        self._rc_thread = threading.Thread(target=self._rc_loop, daemon=True)
         self._rc_thread.start()
+        self._vid_thread = threading.Thread(target=self._video_loop, daemon=True)
+        self._vid_thread.start()
 
-    def _build_kalman(self):
-        kf = cv2.KalmanFilter(6, 3)
-        dt = 1.0 / 30.0
-        kf.transitionMatrix = np.array([
-            [1, 0, 0, dt, 0,  0 ],
-            [0, 1, 0, 0,  dt, 0 ],
-            [0, 0, 1, 0,  0,  dt],
-            [0, 0, 0, 1,  0,  0 ],
-            [0, 0, 0, 0,  1,  0 ],
-            [0, 0, 0, 0,  0,  1 ],
-        ], dtype=np.float32)
-        kf.measurementMatrix = np.array([
-            [1, 0, 0, 0, 0, 0],
-            [0, 1, 0, 0, 0, 0],
-            [0, 0, 1, 0, 0, 0],
-        ], dtype=np.float32)
-        kf.processNoiseCov     = np.eye(6, dtype=np.float32) * 1e-2
-        kf.measurementNoiseCov = np.eye(3, dtype=np.float32) * 0.5
-        kf.errorCovPost        = np.eye(6, dtype=np.float32)
-        return kf
+    def _tof_loop(self):
+        while self._active:
+            try:
+                with self._sdk_lock:
+                    raw = self._tello._tello.send_command_with_return('EXT tof?', timeout=1)
+                if raw and raw.strip().startswith('tof '):
+                    mm = int(raw.strip().split()[1])
+                    raw_cm = -1.0 if mm >= 8190 else mm / 10.0
+                    if raw_cm > 0:
+                        if self._tof_ema < 0:
+                            self._tof_ema = raw_cm          # inicializar EMA
+                        else:
+                            self._tof_ema = (self.TOF_EMA_ALPHA * raw_cm
+                                             + (1 - self.TOF_EMA_ALPHA) * self._tof_ema)
+                        self.front_tof_cm = self._tof_ema
+                    else:
+                        self.front_tof_cm = -1.0
+                        self._tof_ema     = -1.0
+                else:
+                    self.front_tof_cm = -1.0
+                    self._tof_ema     = -1.0
+            except Exception:
+                self.front_tof_cm = -1.0
+                self._tof_ema     = -1.0
+            time.sleep(0.1)
 
-    def _kf_update(self, cx, cy, ratio):
-        meas = np.array([[cx], [cy], [ratio]], dtype=np.float32)
-        if not self._kf_init:
-            self._kf.statePre = np.array(
-                [[cx], [cy], [ratio], [0], [0], [0]], dtype=np.float32
-            )
-            self._kf_init = True
-        self._kf.predict()
-        self._kf.correct(meas)
-        state = self._kf.statePost
-        return float(state[0]), float(state[1]), float(state[2])
+
+    def _detect_persons(self, frame_rgb):
+        results = pose_model(frame_rgb, imgsz=320, verbose=False)
+        persons = []
+        for result in results:
+            if result.boxes is None:
+                continue
+            kps = result.keypoints.xy if result.keypoints is not None else None
+            for i, (box, conf) in enumerate(zip(result.boxes.xyxy, result.boxes.conf)):
+                if float(conf) < self.CONF_THRESHOLD:
+                    continue
+                x1 = max(0, int(box[0]))
+                y1 = max(0, int(box[1]))
+                x2 = min(int(box[2]), self.FRAME_W)
+                y2 = min(int(box[3]), self.FRAME_H)
+                if (x2 - x1) < self.MIN_BBOX_W or (y2 - y1) < self.MIN_BBOX_H:
+                    continue
+                shoulder_cy = None
+                if kps is not None and len(kps) > i:
+                    kp = kps[i]
+                    if len(kp) > 6:
+                        lsx, lsy = float(kp[5][0]), float(kp[5][1])
+                        rsx, rsy = float(kp[6][0]), float(kp[6][1])
+                        if lsx > 0 and rsx > 0:
+                            shoulder_cy = (lsy + rsy) / 2.0
+                persons.append((x1, y1, x2, y2, shoulder_cy))
+        return persons
 
     @staticmethod
     def _iou(b1, b2):
-        ix1, iy1 = max(b1[0], b2[0]), max(b1[1], b2[1])
-        ix2, iy2 = min(b1[2], b2[2]), min(b1[3], b2[3])
-        iw, ih   = max(0, ix2 - ix1), max(0, iy2 - iy1)
-        inter    = iw * ih
+        ix1 = max(b1[0], b2[0]); iy1 = max(b1[1], b2[1])
+        ix2 = min(b1[2], b2[2]); iy2 = min(b1[3], b2[3])
+        iw  = max(0, ix2 - ix1); ih  = max(0, iy2 - iy1)
+        inter = iw * ih
         if inter == 0:
             return 0.0
-        area1 = (b1[2] - b1[0]) * (b1[3] - b1[1])
-        area2 = (b2[2] - b2[0]) * (b2[3] - b2[1])
-        return inter / (area1 + area2 - inter + 1e-6)
+        a1 = (b1[2]-b1[0]) * (b1[3]-b1[1])
+        a2 = (b2[2]-b2[0]) * (b2[3]-b2[1])
+        return inter / (a1 + a2 - inter + 1e-6)
 
-    def _select_person(self, persons):
+    def _select_best_person(self, persons, prev_bbox):
         if not persons:
             return None
-        if self._prev_bbox is None:
-            return max(persons, key=lambda p: (p[2] - p[0]) * (p[3] - p[1]))
-        best = max(persons, key=lambda p: self._iou(self._prev_bbox, p))
-        if self._iou(self._prev_bbox, best) < 0.05:
-            best = max(persons, key=lambda p: (p[2] - p[0]) * (p[3] - p[1]))
+        if prev_bbox is None:
+            return max(persons, key=lambda p: (p[2]-p[0]) * (p[3]-p[1]))
+        best = max(persons, key=lambda p: self._iou(prev_bbox[:4], p[:4]))
+        if self._iou(prev_bbox[:4], best[:4]) < 0.05:
+            best = max(persons, key=lambda p: (p[2]-p[0]) * (p[3]-p[1]))
         return best
 
-    def _init_tracker(self, frame_bgr, bbox_xyxy):
-        x1, y1, x2, y2 = bbox_xyxy
-        w, h = x2 - x1, y2 - y1
-        try:
-            self._tracker = cv2.TrackerKCF_create()
-            self._tracker.init(frame_bgr, (x1, y1, w, h))
-            self._tracker_bbox = (x1, y1, w, h)
-        except Exception as e:
-            print(f'[FOLLOW] Tracker init error: {e}')
-            self._tracker = None
+    def _video_loop(self):
+        frame_count       = 0
+        consecutive_none  = 0
+        detected_persons  = []
+        prev_bbox         = None
 
-    def _update_tracker(self, frame_bgr):
-        if self._tracker is None:
-            return None
-        ok, bbox = self._tracker.update(frame_bgr)
-        if not ok:
-            self._tracker = None
-            return None
-        x, y, w, h = [int(v) for v in bbox]
-        if w < 20 or h < 20:
-            self._tracker = None
-            return None
-        self._tracker_bbox = (x, y, w, h)
-        return (x, y, x + w, y + h)
+        ema_cx    = float(self.FRAME_W // 2)
+        ema_cy    = float(self.FRAME_H // 2)
+        ema_ratio = self.TARGET_RATIO
+        ema_init  = False
+
+        last_seen_time    = 0.0
+        search_start_time = None
+
+        while self._active:
+            frame_rgb = self._tello.get_frame()
+
+            if frame_rgb is None:
+                consecutive_none += 1
+                if consecutive_none > 300:
+                    print('[FOLLOW] Stream muerto, deteniendo.')
+                    self._active = False
+                    break
+                time.sleep(0.01)
+                continue
+            consecutive_none = 0
+
+            frame_count += 1
+            frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+
+            actual_h, actual_w = frame_bgr.shape[:2]
+            ref_x = actual_w // 2
+            ref_y = actual_h // 2
+
+            if frame_count % self.YOLO_FRAME_STRIDE == 0:
+                detected_persons = self._detect_persons(frame_rgb)
+
+            best = self._select_best_person(detected_persons, prev_bbox)
+            now  = time.time()
+
+            if best is not None:
+                last_seen_time    = now
+                search_start_time = None
+                prev_bbox         = best
+
+                x1, y1, x2, y2, shoulder_cy = best
+                bw = x2 - x1
+                bh = y2 - y1
+                raw_cx    = float(x1 + bw / 2.0)
+                vertical_offset_px = 80
+                raw_cy    = shoulder_cy if shoulder_cy is not None else float(y1 + bh / 2.0) - vertical_offset_px
+                raw_ratio = (bw * bh) / float(actual_w * actual_h)
+
+                if not ema_init:
+                    ema_cx    = raw_cx
+                    ema_cy    = raw_cy
+                    ema_ratio = raw_ratio
+                    ema_init  = True
+                else:
+                    a         = self.EMA_ALPHA
+                    ema_cx    = a * raw_cx    + (1 - a) * ema_cx
+                    ema_cy    = a * raw_cy    + (1 - a) * ema_cy
+                    ema_ratio = a * raw_ratio + (1 - a) * ema_ratio
+
+                err_x = ema_cx - ref_x
+                if abs(err_x) < self.X_DEADZONE_PX:
+                    err_x = 0.0
+                yaw = int(self._pid_yaw(err_x))
+
+                err_y = ema_cy - ref_y
+                if abs(err_y) < self.Y_DEADZONE_PX:
+                    err_y = 0.0
+                throttle = int(self._pid_thr(err_y))
+
+                tof_valid = self.front_tof_cm > 0
+                use_tof   = tof_valid and (self.front_tof_cm < 100.0)
+
+                if use_tof:
+                    err_fb_tof = self.front_tof_cm - self.STOP_DISTANCE_CM
+                    if abs(err_fb_tof) < 5.0:
+                        fb = 0
+                        self._pid_fb_tof.reset()
+                        self._pitch_source_last = 'none'
+                    else:
+                        if self._pitch_source_last != 'tof':
+                            self._pid_fb_tof.reset()
+                        self._pid_fb_bbox.reset()
+                        fb = int(self._pid_fb_tof(err_fb_tof))
+                        self._pitch_source_last = 'tof'
+                    self._follow_status = 'tof'
+                    self._tof_display   = self.front_tof_cm
+                else:
+                    err_fb_bbox = ema_ratio - self.TARGET_RATIO
+                    if abs(err_fb_bbox) < self.RATIO_DEADZONE:
+                        fb = 0
+                        self._pid_fb_bbox.reset()
+                        self._pitch_source_last = 'none'
+                    else:
+                        if self._pitch_source_last != 'bbox':
+                            self._pid_fb_bbox.reset()
+                        fb = int(self._pid_fb_bbox(err_fb_bbox))
+                        self._pitch_source_last = 'bbox'
+                    self._pid_fb_tof.reset()
+                    self._follow_status = 'following'
+                    self._tof_display   = -1.0
+
+                with self._rc_lock:
+                    self._rc = [0, fb, throttle, yaw]
+
+                cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), (250, 150, 0), 2)
+                if shoulder_cy is not None:
+                    cv2.circle(frame_bgr, (int(raw_cx), int(shoulder_cy)), 6, (0, 255, 255), -1)
+                cv2.circle(frame_bgr, (ref_x, ref_y), 8, (0, 255, 0), 2)
+                cv2.circle(frame_bgr, (int(ema_cx), int(ema_cy)), 5, (255, 0, 255), -1)
+                src_label = f'ToF:{self.front_tof_cm:.0f}cm' if use_tof else f'BBox:{ema_ratio:.3f}'
+                cv2.putText(frame_bgr,
+                    f'Y:{yaw:+d} T:{throttle:+d} FB:{fb:+d} [{src_label}]',
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (250, 150, 0), 2)
+                cv2.putText(frame_bgr,
+                    f'ex:{err_x:+.0f} ey:{err_y:+.0f} ratio:{ema_ratio:.3f}',
+                    (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (100, 200, 255), 2)
+                yolo_tick = (frame_count % self.YOLO_FRAME_STRIDE == 0)
+                cv2.putText(frame_bgr, '[YOLO]' if yolo_tick else '[EMA]',
+                    (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 120), 2)
+                with self._frame_lock:
+                    out = cv2.cvtColor(frame_bgr,cv2.COLOR_BGR2RGB)
+                    self._debug_frame = cv2.resize (out, (640,480), interpolation=cv2.INTER_LINEAR)
+
+            elif last_seen_time > 0 and (now - last_seen_time) < self.TARGET_LOST_GRACE_S:
+                with self._rc_lock:
+                    self._rc = [0, 0, 0, 0]
+                self._follow_status = 'grace'
+                self._tof_display   = -1.0
+                cv2.putText(frame_bgr, 'FOLLOW: grace...',
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 200, 255), 2)
+                with self._frame_lock:
+                    out = cv2.cvtColor(frame_bgr,cv2.COLOR_BGR2RGB)
+                    self._debug_frame = cv2.resize (out, (640,480), interpolation=cv2.INTER_LINEAR)
+
+            else:
+                ema_init         = False
+                prev_bbox        = None
+                detected_persons = []
+                self._pid_yaw.reset()
+                self._pid_thr.reset()
+                self._pid_fb_bbox.reset()
+                self._pid_fb_tof.reset()
+                self._pitch_source_last = 'none'
+                self._tof_display       = -1.0
+
+                if search_start_time is None:
+                    search_start_time = now
+
+                time_searching = now - search_start_time
+
+                if time_searching >= self.SEARCH_LOST_S:
+                    if time_searching < self.SEARCH_LOST_S + self.SEARCH_SPIN_S:
+                        with self._rc_lock:
+                            self._rc = [0, 0, 0, self.SEARCH_YAW]
+                        self._follow_status = 'searching'
+                        label = 'FOLLOW: buscando 360...'
+                    else:
+                        with self._rc_lock:
+                            self._rc = [0, 0, 0, 0]
+                        search_start_time   = None
+                        self._follow_status = 'lost'
+                        label = 'FOLLOW: sin target'
+                else:
+                    with self._rc_lock:
+                        self._rc = [0, 0, 0, 0]
+                    self._follow_status = 'waiting'
+                    label = f'FOLLOW: esperando... ({self.SEARCH_LOST_S - time_searching:.1f}s)'
+
+                cv2.putText(frame_bgr, label,
+                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 100, 255), 2)
+                with self._frame_lock:
+                    out = cv2.cvtColor(frame_bgr,cv2.COLOR_BGR2RGB)
+                    self._debug_frame = cv2.resize (out, (640,480), interpolation=cv2.INTER_LINEAR)
 
     def _rc_loop(self):
         interval = 1.0 / 20.0
         while self._active:
             t0 = time.time()
-            with self._lock:
-                rc   = self._rc
-                lost = self._target_lost
+            with self._rc_lock:
+                lr, fb, ud, yaw = self._rc
             try:
-                if self._tello._tello is not None:
-                    if lost:
-                        self._tello._tello.send_rc_control(0, 0, 0, 0)
-                    else:
-                        lr, fb, ud, yaw = rc
-                        self._tello._tello.send_rc_control(lr, fb, ud, yaw)
+                with self._sdk_lock:
+                    self._tello.rc(lr, fb, ud, yaw)
             except Exception as e:
-                print(f'[FOLLOW RC] Error: {e}')
+                print(e)
             elapsed = time.time() - t0
             time.sleep(max(0.0, interval - elapsed))
 
-    def process(self, frame_rgb):
-        self._frame_count += 1
-        now = time.time()
-        frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-
-        bbox_xyxy = None
-        run_yolo = (self._frame_count % self.YOLO_EVERY == 0) or (self._tracker is None)
-
-        if run_yolo:
-            results = model(frame_rgb)
-            persons = []
-            for *box, conf, cls in results.xyxy[0]:
-                if model.names[int(cls.item())] == 'person' and float(conf) > 0.45:
-                    x1, y1, x2, y2 = int(box[0]), int(box[1]), int(box[2]), int(box[3])
-                    if (x2 - x1) > 30 and (y2 - y1) > 50:
-                        persons.append((x1, y1, x2, y2))
-
-            chosen = self._select_person(persons)
-            if chosen is not None:
-                bbox_xyxy = chosen
-                self._prev_bbox  = chosen
-                self._last_det_t = now
-                self._init_tracker(frame_bgr, chosen)
-
-        if bbox_xyxy is None and self._tracker is not None:
-            tracked = self._update_tracker(frame_bgr)
-            if tracked is not None:
-                bbox_xyxy = tracked
-
-        target_lost = (bbox_xyxy is None) or ((now - self._last_det_t) > self.TARGET_TIMEOUT)
-
-        if target_lost:
-            with self._lock:
-                self._rc          = (0, 0, 0, 0)
-                self._target_lost = True
-            cv2.putText(frame_bgr, 'FOLLOW: buscando persona...',
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 100, 255), 2)
-            return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-
-        x1, y1, x2, y2 = bbox_xyxy
-        bw, bh = x2 - x1, y2 - y1
-        raw_cx    = x1 + bw / 2.0
-        raw_cy    = y1 + bh / 2.0
-        raw_ratio = (bw * bh) / self.FRAME_AREA
-
-        sm_cx, sm_cy, sm_ratio = self._kf_update(raw_cx, raw_cy, raw_ratio)
-
-        err_x = sm_cx - self.REF_X
-        err_y = self.REF_Y - sm_cy
-        err_r = self.TARGET_RATIO - sm_ratio
-
-        if abs(err_x) < self.X_DEADZONE_PX:
-            err_x = 0.0
-        if abs(err_y) < self.Y_DEADZONE_PX:
-            err_y = 0.0
-        if abs(err_r) < self.RATIO_DEADZONE:
-            err_r = 0.0
-
-        yaw      = int(self._pid_yaw(err_x))
-        throttle = int(self._pid_thr(err_y))
-        fb       = int(self._pid_fb(err_r))
-
-        with self._lock:
-            self._rc          = (0, fb, throttle, yaw)
-            self._target_lost = False
-
-        ix1, iy1, ix2, iy2 = int(x1), int(y1), int(x2), int(y2)
-        cv2.rectangle(frame_bgr, (ix1, iy1), (ix2, iy2), (250, 150, 0), 2)
-        cv2.circle(frame_bgr, (self.REF_X, self.REF_Y), 8, (0, 255, 0), 2)
-        cv2.circle(frame_bgr, (int(sm_cx), int(sm_cy)), 5, (255, 0, 255), -1)
-        cv2.putText(frame_bgr,
-            f'Y:{yaw:+d} T:{throttle:+d} FB:{fb:+d} ratio:{sm_ratio:.3f}',
-            (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (250, 150, 0), 2)
-        cv2.putText(frame_bgr,
-            f'ex:{err_x:+.0f} ey:{err_y:+.0f} er:{err_r:+.3f}',
-            (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (100, 200, 255), 2)
-        mode_label = 'YOLO' if run_yolo else 'TRACK'
-        cv2.putText(frame_bgr, f'[{mode_label}]',
-            (10, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (0, 255, 120), 2)
-
-        return cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+    def get_debug_frame(self):
+        with self._frame_lock:
+            return self._debug_frame
 
     def stop(self):
         self._active = False
-        with self._lock:
-            self._rc          = (0, 0, 0, 0)
-            self._target_lost = True
+        time.sleep(0.5)
         try:
-            if self._tello._tello is not None:
-                self._tello._tello.send_rc_control(0, 0, 0, 0)
+            self._tello.rc(0, 0, 0, 0)
         except Exception:
             pass
 
     def reset_pids(self):
         self._pid_yaw.reset()
         self._pid_thr.reset()
-        self._pid_fb.reset()
-        self._kf_init   = False
-        self._prev_bbox = None
-        self._tracker   = None
+        self._pid_fb_bbox.reset()
+        self._pid_fb_tof.reset()
+        self._pitch_source_last = 'none'
+        self.front_tof_cm = -1.0
+        self._tof_ema     = -1.0
+        self._follow_status = 'waiting'
+        self._tof_display   = -1.0
+        with self._rc_lock:
+            self._rc = [0, 0, 0, 0]
+        with self._frame_lock:
+            self._debug_frame = None
+
 
 _follow_ctrl: FollowController = None
+
+# ============================================================
+# ORBIT
+# ============================================================
+
+def _run_orbit(radius_cm: int, clockwise: bool):
+    global _orbit_active
+    yaw_speed = 30
+    fwd_speed = 20
+    if not clockwise:
+        yaw_speed = -yaw_speed
+    try:
+        interval = 1.0 / 20.0
+        while _orbit_active:
+            if tello is None or tello.state != 'flying':
+                break
+            t0 = time.time()
+            tello.rc(0, fwd_speed, 0, yaw_speed)
+            elapsed = time.time() - t0
+            time.sleep(max(0.0, interval - elapsed))
+    finally:
+        _orbit_active = False
+        try:
+            if tello:
+                tello.rc(0, 0, 0, 0)
+        except Exception:
+            pass
 
 # ============================================================
 # MQTT callbacks
 # ============================================================
 
-def on_connect(client, userdata, flags, rc):
+def on_connect(client,userdata, flags_dict, rc):
     if rc == 0:
         print('Ground Station conectada :)')
         client.subscribe('mobileFlutter/groundStation/#')
@@ -425,7 +538,7 @@ def process_telemetry_info(telemetry_info):
         try:
             loop.call_soon_threadsafe(telemetry_channel.send, payload)
         except Exception as e:
-            print(f'Error enviando telemetría: {e}')
+            print(f'Error enviando telemetrí­a: {e}')
 
 
 def process_tello_telemetry():
@@ -449,8 +562,9 @@ def process_tello_telemetry():
             if telemetry_channel is not None and telemetry_channel.readyState == 'open':
                 loop.call_soon_threadsafe(telemetry_channel.send, payload)
         except Exception as e:
-            print(f'[TELLO TEL] Error: {e}')
+            print("error")
         time.sleep(0.2)
+
 
 def monitor_arm_state():
     global _monitoring
@@ -467,7 +581,9 @@ def monitor_arm_state():
         time.sleep(1)
     _monitoring = False
 
+
 def handle_joystick(data_str):
+    global _orbit_active
     try:
         data = json.loads(data_str)
         lx = data.get('lx', 0.0)
@@ -475,50 +591,43 @@ def handle_joystick(data_str):
         rx = data.get('rx', 0.0)
         ry = data.get('ry', 0.0)
 
-        # TELLO
         if flight_mode == 'tello':
-            if tello is None:
-                return
-            if _follow_mode:
-                return
-            if tello.state != 'flying':
-                return
+            if tello is None:  return
+            if _follow_mode:   return
+            if _orbit_active:  return
+            if tello.state != 'flying': return
             threshold = 0.1
-            def to_rc(val): return int(val * 100)
-            left_right = to_rc(rx) if abs(rx) >= threshold else 0
-            fwd_back   = to_rc(ry) if abs(ry) >= threshold else 0
-            up_down    = to_rc(ly) if abs(ly) >= threshold else 0
-            yaw        = to_rc(lx) if abs(lx) >= threshold else 0
-            tello._tello.send_rc_control(left_right, fwd_back, up_down, yaw)
+            def to_rc(v): return int(v * 100)
+            tello.rc(
+                to_rc(rx) if abs(rx) >= threshold else 0,
+                to_rc(ry) if abs(ry) >= threshold else 0,
+                to_rc(ly) if abs(ly) >= threshold else 0,
+                to_rc(lx) if abs(lx) >= threshold else 0,
+            )
             return
 
-        # ARDUPILOT / SITL
         if dron.state not in ('flying', 'returning'):
             return
         threshold = 0.1
-        def to_pwm(val): return int(1500 + val * 500)
-        yaw_expo  = 0.4
-        yaw_scale = 0.25
-        def apply_expo(val, expo): return expo * val**3 + (1 - expo) * val
-        apply_expo(lx, yaw_expo) * yaw_scale
-
-        roll     = to_pwm(rx) if abs(rx) >= threshold else 1500
-        pitch    = to_pwm(ry) if abs(ry) >= threshold else 1500
-        throttle = to_pwm(ly) if abs(ly) >= threshold else 1500
-        yaw      = to_pwm(lx) if abs(lx) >= threshold else 1500
-        dron.send_rc(roll, pitch, throttle, yaw)
-
+        def to_pwm(v): return int(1500 + v * 500)
+        dron.send_rc(
+            to_pwm(rx) if abs(rx) >= threshold else 1500,
+            to_pwm(ry) if abs(ry) >= threshold else 1500,
+            to_pwm(ly) if abs(ly) >= threshold else 1500,
+            to_pwm(lx) if abs(lx) >= threshold else 1500,
+        )
     except Exception as e:
-        print(f'Error joystick: {e}')
+        print('Error joystick')
 
-def on_message(client, userdata, message):
+
+def on_message(client,userdata, message):
     global _pc, _camera_track, flight_mode, camera_index, _follow_mode, tello, _follow_ctrl
+    global _orbit_active, _orbit_thread
 
     parts   = message.topic.split('/')
     command = parts[2]
     print(f'Comando recibido: {command}')
 
-    # SET MODE
     if command == 'setMode':
         mode = message.payload.decode().strip()
         if mode in ('ardupilot', 'sitl', 'tello'):
@@ -529,7 +638,6 @@ def on_message(client, userdata, message):
         else:
             print(f'[WARN] Modo desconocido: {mode}')
 
-    # SET CAMERA
     if command == 'setCamera':
         try:
             idx = int(message.payload.decode().strip())
@@ -543,12 +651,9 @@ def on_message(client, userdata, message):
         except ValueError:
             print('[WARN] setCamera: valor no numerico')
 
-    # CONNECT
     if command == 'connect':
         def conectar():
             global _pc, _camera_track, telemetry_channel
-
-            # TELLO
             if flight_mode == 'tello':
                 already_connected = tello.state in ('connected', 'flying')
                 if not already_connected:
@@ -563,14 +668,9 @@ def on_message(client, userdata, message):
                 else:
                     print(f'[TELLO] Recuperacion de sesion - estado: "{tello.state}"')
                 if _pc is not None:
-                    try:
-                        asyncio.run_coroutine_threadsafe(_pc.close(), loop)
-                    except Exception:
-                        pass
-                    _pc = None
-                    _camera_track = None
-                    telemetry_channel = None
-
+                    try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
+                    except Exception: pass
+                    _pc = None; _camera_track = None; telemetry_channel = None
                 client.publish('groundStation/mobileFlutter/connected', 'connected')
                 time.sleep(0.3)
                 if tello.state == 'flying':
@@ -578,36 +678,17 @@ def on_message(client, userdata, message):
                 asyncio.run_coroutine_threadsafe(webrtc_client(), loop)
                 return
 
-            # ARDUPILOT / SITL
-            if flight_mode == 'ardupilot':
-                conn_str = 'com7'
-                baud = 57600
-            elif flight_mode == 'sitl':
-                conn_str = 'tcp:127.0.0.1:5763'
-                baud = 115200
-            else:
-                print(f'[ERROR] Modo "{flight_mode}" no disponible.')
-                client.publish('groundStation/mobileFlutter/disconnected', f'mode_unavailable:{flight_mode}')
-                return
-
-            print(f'[INFO] Modo: {flight_mode} | Conexion: {conn_str} | Camara: {camera_index}')
-            already_connected = dron.state in ('connected', 'armed', 'flying', 'returning')
-
-            if already_connected and hasattr(dron, '_conn_str') and dron._conn_str != conn_str:
-                already_connected = False
+            conn_str = 'com7' if flight_mode == 'ardupilot' else 'tcp:127.0.0.1:5763'
+            baud     = 57600  if flight_mode == 'ardupilot' else 115200
+            already  = dron.state in ('connected', 'armed', 'flying', 'returning')
+            if already and hasattr(dron, '_conn_str') and dron._conn_str != conn_str:
+                already = False
+                try: dron.stop_sending_telemetry_info(); dron.disconnect()
+                except Exception: pass
+            if not already:
                 try:
-                    dron.stop_sending_telemetry_info()
-                    dron.disconnect()
-                except Exception:
-                    pass
-
-            if not already_connected:
-                print('Conectando al dron...')
-                try:
-                    dron.connect(conn_str, baud)
-                    dron._conn_str = conn_str
-                    if dron.vehicle is None:
-                        raise Exception('Vehicle is None after connect')
+                    dron.connect(conn_str, baud); dron._conn_str = conn_str
+                    if dron.vehicle is None: raise Exception('Vehicle is None')
                     dron.frequency = 2
                     dron.send_telemetry_info(process_telemetry_info)
                 except Exception as e:
@@ -615,173 +696,125 @@ def on_message(client, userdata, message):
                     client.publish('groundStation/mobileFlutter/disconnected', 'connection_failed')
                     return
             else:
-                print(f'Recuperacion de sesion - estado: "{dron.state}"')
                 if _pc is not None:
-                    try:
-                        asyncio.run_coroutine_threadsafe(_pc.close(), loop)
-                    except Exception:
-                        pass
-                    _pc = None
-                    _camera_track = None
-                    telemetry_channel = None
-                try:
-                    dron.stop_sending_telemetry_info()
-                except Exception:
-                    pass
+                    try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
+                    except Exception: pass
+                    _pc = None; _camera_track = None; telemetry_channel = None
+                try: dron.stop_sending_telemetry_info()
+                except Exception: pass
                 dron.send_telemetry_info(process_telemetry_info)
-
             client.publish('groundStation/mobileFlutter/connected', 'connected')
             time.sleep(0.3)
-
             if dron.state in ('armed', 'flying', 'returning'):
                 client.publish('groundStation/mobileFlutter/armed', 'armed')
-                print('Session recovery: re-publicado armed')
                 if dron.state in ('flying', 'returning'):
                     time.sleep(0.1)
                     client.publish('groundStation/mobileFlutter/flying', 'flying')
-                    print('Session recovery: re-publicado flying')
-
             asyncio.run_coroutine_threadsafe(webrtc_client(), loop)
-
         threading.Thread(target=conectar).start()
 
-    # ARM (solo ArduPilot/SITL)
     if command == 'arm':
-        if flight_mode == 'tello':
-            return
+        if flight_mode == 'tello': return
         if dron.state == 'connected':
             def armar():
                 dron.arm()
-                print('Motores armados!')
                 client.publish('groundStation/mobileFlutter/armed', 'armed')
                 threading.Thread(target=monitor_arm_state, daemon=True).start()
             threading.Thread(target=armar).start()
-        else:
-            print(f'Arm ignorado: estado "{dron.state}"')
 
-    # TAKEOFF
     if command == 'takeoff':
         if flight_mode == 'tello':
-            if tello is None:
-                return
+            if tello is None: return
             if tello.state == 'connected':
                 def despegar_tello():
                     tello.takeOff(blocking=True)
                     client.publish('groundStation/mobileFlutter/flying', 'flying')
                 threading.Thread(target=despegar_tello, daemon=True).start()
-            else:
-                print(f'[TELLO] Takeoff ignorado: estado "{tello.state}"')
             return
-
         if dron.state in ('armed', 'flying'):
-            parts_payload = message.payload.decode().split(':')
-            altitude = int(parts_payload[0])
-            speed = float(parts_payload[1]) if len(parts_payload) > 1 else dron.navSpeed
+            parts_p  = message.payload.decode().split(':')
+            altitude = int(parts_p[0])
+            speed    = float(parts_p[1]) if len(parts_p) > 1 else dron.navSpeed
             def despegar():
-                print(f'Despegando a {altitude}m a {speed}m/s...')
-                dron.navSpeed = speed
-                dron.takeOff(altitude)
-                print('Despegue completado!')
-                dron.vehicle.set_mode('LOITER')
-                dron.changeNavSpeed(speed)
+                dron.navSpeed = speed; dron.takeOff(altitude)
+                dron.vehicle.set_mode('LOITER'); dron.changeNavSpeed(speed)
                 client.publish('groundStation/mobileFlutter/flying', 'flying')
             threading.Thread(target=despegar).start()
-        else:
-            print(f'Takeoff ignorado: estado "{dron.state}"')
 
-    # LAND
     if command == 'land':
         if flight_mode == 'tello':
-            if tello is None:
-                return
+            if tello is None: return
             if tello.state == 'flying':
                 if _follow_mode:
                     _follow_mode = False
-                    if _follow_ctrl is not None:
-                        _follow_ctrl.stop()
+                    if _follow_ctrl: _follow_ctrl.stop()
                 def aterrizar_tello():
                     tello.Land(blocking=True)
                     client.publish('groundStation/mobileFlutter/landed', 'landed')
                 threading.Thread(target=aterrizar_tello, daemon=True).start()
-            else:
-                print(f'[TELLO] Land ignorado: estado "{tello.state}"')
             return
-
         if dron.state in ('flying', 'returning'):
             def aterrizar():
-                print('Aterrizando...')
                 dron.Land()
-                print('Aterrizado!')
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
             threading.Thread(target=aterrizar).start()
-        else:
-            print(f'Land ignorado: estado "{dron.state}"')
 
-    # RTL (solo ArduPilot/SITL)
     if command == 'rtl':
-        if flight_mode == 'tello':
-            return
+        if flight_mode == 'tello': return
         if dron.state in ('flying', 'returning'):
             def rtl():
-                print('Volviendo al punto de lanzamiento...')
-                dron.changeNavSpeed(dron.navSpeed)
-                dron.RTL()
-                print('RTL completado!')
+                dron.changeNavSpeed(dron.navSpeed); dron.RTL()
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
             threading.Thread(target=rtl).start()
-        else:
-            print(f'RTL ignorado: estado "{dron.state}"')
 
-    # SPEED
     if command == 'speed':
-        if flight_mode == 'tello':
-            return
+        if flight_mode == 'tello': return
         spd = float(message.payload.decode())
-        print(f'Velocidad: {spd} m/s')
         dron.navSpeed = spd
-        if dron.vehicle is not None:
-            dron.changeNavSpeed(spd)
+        if dron.vehicle: dron.changeNavSpeed(spd)
 
-    # ZOOM
     if command == 'zoom':
         try:
-            zoom_val = float(message.payload.decode())
-            zoom_val = max(1.0, min(zoom_val, 10.0))
-            if _camera_track is not None:
-                _camera_track.zoom_factor = zoom_val
-            print(f'Zoom: {zoom_val}x')
+            zoom_val = max(1.0, min(float(message.payload.decode()), 10.0))
+            if _camera_track: _camera_track.zoom_factor = zoom_val
         except ValueError:
             print('[WARN] Zoom: valor invalido')
 
-    # FLIP (solo Tello)
     if command == 'flip':
-        if flight_mode == 'tello' and tello is not None and tello.state == 'flying':
-            direction = message.payload.decode().strip()
-            try:
-                tello._tello.flip(direction[0])
-                print(f'[TELLO] Flip: {direction}')
-            except Exception as e:
-                print(f'[TELLO] Flip error: {e}')
+        if flight_mode == 'tello' and tello and tello.state == 'flying':
+            d = message.payload.decode().strip()
+            if _follow_ctrl is not None:
+                with _follow_ctrl._sdk_lock:
+                    try: tello._tello.flip(d[0])
+                    except Exception as e: print(f'[TELLO] Flip error: {e}')
+            else:
+                try: tello._tello.flip(d[0])
+                except Exception as e: print(f'[TELLO] Flip error: {e}')
 
-    # DANCE (solo Tello)
-    if command == 'dance':
-        if flight_mode == 'tello' and tello is not None and tello.state == 'flying':
-            def do_dance():
-                try:
-                    print('[TELLO] Iniciando dance...')
-                    tello._tello.flip('f')
-                    time.sleep(1.5)
-                    tello._tello.flip('b')
-                    time.sleep(1.5)
-                    tello._tello.flip('l')
-                    time.sleep(1.5)
-                    tello._tello.flip('r')
-                    print('[TELLO] Dance completado!')
-                except Exception as e:
-                    print(f'[TELLO] Dance error: {e}')
-            threading.Thread(target=do_dance, daemon=True).start()
+        if command == 'orbit':
+            global _orbit_active, _orbit_thread
+            if flight_mode == 'tello' and tello and tello.state == 'flying':
+                payload = message.payload.decode().strip()
+                if payload == 'stop':
+                    _orbit_active = False
+                elif not _orbit_active:
+                    # Desactivar follow mode si está activo
+                    if _follow_mode:
+                        _follow_mode = False
+                        if _follow_ctrl:
+                            _follow_ctrl.stop()
 
-    # FOLLOW MODE (solo Tello)
+                    parts_o   = payload.split(':')
+                    radius_cm = int(parts_o[0])
+                    clockwise = len(parts_o) > 1 and parts_o[1] == 'cw'
+                    _orbit_active = True
+                    _orbit_thread = threading.Thread(
+                        target=_run_orbit,
+                        args=(radius_cm, clockwise),
+                        daemon=True
+                    )
+                    _orbit_thread.start()
+
     if command == 'followMode':
         if flight_mode == 'tello' and tello is not None:
             new_state = message.payload.decode().strip() == 'true'
@@ -797,172 +830,112 @@ def on_message(client, userdata, message):
                     _follow_ctrl.reset_pids()
                     if not _follow_ctrl._rc_thread.is_alive():
                         _follow_ctrl._rc_thread = threading.Thread(
-                            target=_follow_ctrl._rc_loop, daemon=True
-                        )
+                            target=_follow_ctrl._rc_loop, daemon=True)
                         _follow_ctrl._rc_thread.start()
+                    if not _follow_ctrl._vid_thread.is_alive():
+                        _follow_ctrl._vid_thread = threading.Thread(
+                            target=_follow_ctrl._video_loop, daemon=True)
+                        _follow_ctrl._vid_thread.start()
                 print('[TELLO] Follow mode ACTIVADO')
             else:
-                if _follow_ctrl is not None:
-                    _follow_ctrl.stop()
+                if _follow_ctrl: _follow_ctrl.stop()
                 print('[TELLO] Follow mode DESACTIVADO')
 
-    # DETECTION MODE
     if command == 'detectionMode':
         mode = message.payload.decode()
-        if _camera_track is not None:
+        if _camera_track:
             _camera_track.detection_mode = mode
-            _camera_track.detecciones = []
-        print(f'Modo deteccion YOLO: {mode}')
+            _camera_track.detecciones    = []
 
-    # DISCONNECT
     if command == 'disconnect':
         if flight_mode == 'tello':
-            if tello is None:
-                return
+            if tello is None: return
             def desconectar_tello():
                 global _pc, _camera_track, _follow_mode, _follow_ctrl
-                print('[TELLO] Desconectando...')
                 _follow_mode = False
-                if _follow_ctrl is not None:
-                    _follow_ctrl.stop()
-                    _follow_ctrl = None
-                try:
-                    tello.stream_off()
-                except Exception:
-                    pass
-                try:
-                    tello.disconnect()
+                if _follow_ctrl: _follow_ctrl.stop(); _follow_ctrl = None
+                try: tello.stream_off()
+                except Exception: pass
+                try: tello.disconnect()
                 except Exception as e:
-                    print(f'[TELLO] Error al desconectar: {e}')
-                if _pc is not None:
-                    try:
-                        asyncio.run_coroutine_threadsafe(_pc.close(), loop)
-                    except Exception:
-                        pass
-                _pc = None
-                _camera_track = None
-                print('[TELLO] Desconectado!')
+                    print("error al desconectar")
+                if _pc:
+                    try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
+                    except Exception: pass
+                _pc = None; _camera_track = None
                 client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
             threading.Thread(target=desconectar_tello, daemon=True).start()
             return
-
         def desconectar():
             global _pc, _camera_track
-            print('Desconectando dron...')
-            try:
-                dron.stop_sending_telemetry_info()
-            except Exception:
-                pass
+            try: dron.stop_sending_telemetry_info()
+            except Exception: pass
             dron.disconnect()
-            if _pc is not None:
-                try:
-                    asyncio.run_coroutine_threadsafe(_pc.close(), loop)
-                except Exception as e:
-                    print(f'Error cerrando PeerConnection: {e}')
-            _pc = None
-            _camera_track = None
-            print('Dron desconectado!')
+            if _pc:
+                try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
+                except Exception as e: print(f'Error cerrando PC: {e}')
+            _pc = None; _camera_track = None
             client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
         threading.Thread(target=desconectar).start()
 
-    # UPLOAD MISSION
     if command == 'uploadMission':
         global _pending_mission, _pending_actions
         try:
-            data = json.loads(message.payload.decode())
+            data        = json.loads(message.payload.decode())
             wp_data     = data.get('waypoints', [])
             takeoff_alt = data.get('takeoffAlt', 5)
             speed       = data.get('speed', dron.navSpeed)
-
-            dronlink_waypoints = []
-            actions = []
-
+            dronlink_wp = []
+            actions     = []
             for wp in wp_data:
-                dronlink_waypoints.append({
-                    'lat': float(wp['lat']),
-                    'lon': float(wp['lon']),
-                    'alt': float(wp['altM']),
-                })
+                dronlink_wp.append({'lat': float(wp['lat']),
+                                    'lon': float(wp['lon']),
+                                    'alt': float(wp['altM'])})
                 actions.append(wp.get('action', {'type': 'none', 'seconds': 5}))
-
-            _pending_mission = {
-                'speed':      speed,
-                'takeOffAlt': takeoff_alt,
-                'waypoints':  dronlink_waypoints,
-            }
+            _pending_mission = {'speed': speed, 'takeOffAlt': takeoff_alt,
+                                'waypoints': dronlink_wp}
             _pending_actions = actions
-
-            print(f'[MISSION] Plan guardado: {len(dronlink_waypoints)} waypoints')
             client.publish('groundStation/mobileFlutter/missionUploaded', 'ok')
-
         except Exception as e:
-            print(f'[MISSION ERROR] {e}')
             client.publish('groundStation/mobileFlutter/missionUploaded', f'error:{e}')
 
-    # START MISSION
     if command == 'startMission':
         if _pending_mission is None:
-            print('[MISSION] No hay mision cargada')
             client.publish('groundStation/mobileFlutter/missionStarted', 'error')
             return
-
         def run_mission():
-            print('[MISSION] Iniciando mision...')
             client.publish('groundStation/mobileFlutter/missionStarted', 'ok')
             try:
                 if not dron.vehicle.motors_armed():
-                    print('[MISSION] Armando motores...')
                     dron.arm()
                     client.publish('groundStation/mobileFlutter/armed', 'armed')
-
                 dron.takeOff(_pending_mission['takeOffAlt'])
-                print('[MISSION] Despegue completado')
-
                 dron.changeNavSpeed(_pending_mission['speed'])
                 client.publish('groundStation/mobileFlutter/flying', 'flying')
-
-                waypoints = _pending_mission['waypoints']
-
-                for index, wp in enumerate(waypoints):
+                for index, wp in enumerate(_pending_mission['waypoints']):
                     client.publish('groundStation/mobileFlutter/missionWaypoint', str(index))
-                    print(f'[MISSION] Navegando a WP {index+1}/{len(waypoints)}')
                     dron.goto(float(wp['lat']), float(wp['lon']), float(wp['alt']))
-
                     if index < len(_pending_actions):
                         action      = _pending_actions[index]
                         action_type = action.get('type', 'none')
                         action_secs = float(action.get('seconds', 5))
-
                         if action_type == 'hover':
-                            print(f'[MISSION] WP {index+1}: hover {action_secs}s')
                             time.sleep(action_secs)
                         elif action_type == 'takePhoto':
                             client.publish('groundStation/mobileFlutter/cameraAction', 'photo')
                         elif action_type == 'recordVideo':
-                            client.publish(
-                                'groundStation/mobileFlutter/cameraAction',
-                                f'record:{int(action_secs)}'
-                            )
+                            client.publish('groundStation/mobileFlutter/cameraAction',
+                                           f'record:{int(action_secs)}')
                             time.sleep(action_secs)
-                        elif action_type == 'rtl':
-                            print(f'[MISSION] WP {index+1}: RTL')
-                            dron.RTL()
+                        elif action_type in ('rtl', 'land'):
+                            dron.RTL() if action_type == 'rtl' else dron.Land()
                             client.publish('groundStation/mobileFlutter/landed', 'landed')
                             return
-                        elif action_type == 'land':
-                            print(f'[MISSION] WP {index+1}: LAND')
-                            dron.Land()
-                            client.publish('groundStation/mobileFlutter/landed', 'landed')
-                            return
-
-                print('[MISSION] Mision completada - RTL automatico')
                 dron.RTL()
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
-
             except Exception as e:
                 print(f'[MISSION ERROR] {e}')
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
-
         threading.Thread(target=run_mission, daemon=True).start()
 
 # ============================================================
@@ -997,24 +970,20 @@ class CameraVideoTrack(VideoStreamTrack):
     def _undistort(self, frame):
         if not self.correct_lens:
             return frame
-        undistorted = cv2.undistort(frame, cam_matrix, dist_coefs, None, new_cam_mtx)
+        u = cv2.undistort(frame, cam_matrix, dist_coefs, None, new_cam_mtx)
         x, y, w, h = roi_crop
         if w > 0 and h > 0:
-            undistorted = undistorted[y:y + h, x:x + w]
-        return undistorted
+            u = u[y:y+h, x:x+w]
+        return u
 
     def _apply_zoom(self, frame):
         if self.zoom_factor <= 1.0:
             return frame
         fh, fw = frame.shape[:2]
-        sx = int(fw / self.zoom_factor)
-        sy = int(fh / self.zoom_factor)
+        sx, sy = int(fw / self.zoom_factor), int(fh / self.zoom_factor)
         cx, cy = fw // 2, fh // 2
-        x1 = max(0, cx - sx // 2)
-        y1 = max(0, cy - sy // 2)
-        x2 = min(fw, cx + sx // 2)
-        y2 = min(fh, cy + sy // 2)
-        cropped = frame[y1:y2, x1:x2]
+        cropped = frame[max(0, cy-sy//2):min(fh, cy+sy//2),
+                        max(0, cx-sx//2):min(fw, cx+sx//2)]
         return cv2.resize(cropped, (fw, fh), interpolation=cv2.INTER_LINEAR)
 
     async def recv(self):
@@ -1034,11 +1003,12 @@ class CameraVideoTrack(VideoStreamTrack):
         frame = self._apply_zoom(frame)
         frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_LINEAR)
 
-        if flight_mode == 'tello' and _follow_mode and _follow_ctrl is not None:
-            if tello.state == 'flying':
-                frame = _follow_ctrl.process(frame)
 
         if flight_mode == 'tello':
+            if _follow_mode and _follow_ctrl is not None and tello.state == 'flying':
+                debug = _follow_ctrl.get_debug_frame()
+                if debug is not None:
+                    frame = debug
             vf = VideoFrame.from_ndarray(frame, format='rgb24')
             vf.pts, vf.time_base = self.frame_count, fractions.Fraction(1, 30)
             return vf
@@ -1060,19 +1030,16 @@ class CameraVideoTrack(VideoStreamTrack):
         frame_bgr = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
         color = (0, 255, 0) if self.detection_mode == 'all' else (0, 150, 255)
         for (x1, y1, x2, y2, label, confidence) in self.detecciones:
-            text = f'{label} ({confidence * 100:.0f}%)'
-            cv2.rectangle(frame_bgr, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame_bgr, text, (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
-
+            cv2.rectangle(frame_bgr, (x1,y1), (x2,y2), color, 2)
+            cv2.putText(frame_bgr, f'{label} ({confidence*100:.0f}%)',
+                        (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
-        cv2.putText(frame_bgr, ts, (10, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
+        cv2.putText(frame_bgr, ts, (10,30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0,255,0), 2)
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         vf = VideoFrame.from_ndarray(frame, format='rgb24')
         vf.pts, vf.time_base = self.frame_count, fractions.Fraction(1, 30)
         return vf
+
 
 # ============================================================
 # WEBRTC - señalización
@@ -1082,67 +1049,49 @@ async def webrtc_client():
     global _pc, telemetry_channel, _camera_track, _webrtc_running
 
     if _webrtc_running:
-        print('[WEBRTC] Ya hay una sesion activa, ignorando nueva llamada.')
+        print('[WEBRTC] Ya hay una sesion activa, ignorando.')
         return
     _webrtc_running = True
 
     if _pc is not None:
-        try:
-            await _pc.close()
-        except Exception:
-            pass
+        try: await _pc.close()
+        except Exception: pass
         _pc = None
 
     ssl_ctx = ssl.create_default_context()
     ssl_ctx.check_hostname = False
-    ssl_ctx.verify_mode = ssl.CERT_NONE
-
-    print(f'Conectando al servidor de senalizacion: {SIGNAL_URL}')
+    ssl_ctx.verify_mode    = ssl.CERT_NONE
 
     try:
         async with websockets.connect(SIGNAL_URL, ssl=ssl_ctx) as ws:
             await ws.send(MY_ID)
-            print(f'Identificado como "{MY_ID}", esperando a "{REMOTE_ID}"...')
-
             await ws.send(json.dumps({
-                'target': REMOTE_ID,
-                'type': 'ice_config',
+                'target': REMOTE_ID, 'type': 'ice_config',
                 'iceServers': [
                     {'urls': 'stun:stun.l.google.com:19302'},
                     {'urls': 'stun:stun1.l.google.com:19302'},
                 ],
             }))
-            print('[WEBRTC] ice_config enviado a Flutter')
-
             await asyncio.sleep(0.8)
 
             _pc = RTCPeerConnection()
-
             joystick_channel  = _pc.createDataChannel('joystick')
             telemetry_channel = _pc.createDataChannel('telemetry')
 
             @joystick_channel.on('message')
-            def on_joystick(msg):
-                handle_joystick(msg)
+            def on_joystick(msg): handle_joystick(msg)
 
             @_pc.on('icecandidate')
             async def on_ice(candidate):
-                if candidate:
-                    await ws.send(json.dumps({
-                        'target': REMOTE_ID,
-                        'type': 'candidate',
-                        'candidate': {
-                            'candidate':     candidate.candidate,
-                            'sdpMid':        candidate.sdpMid,
-                            'sdpMLineIndex': candidate.sdpMLineIndex,
-                        },
-                    }))
-                else:
-                    await ws.send(json.dumps({
-                        'target': REMOTE_ID,
-                        'type': 'candidate',
-                        'candidate': None,
-                    }))
+                payload = {
+                    'target': REMOTE_ID, 'type': 'candidate',
+                    'candidate': {
+                        'candidate':     candidate.candidate,
+                        'sdpMid':        candidate.sdpMid,
+                        'sdpMLineIndex': candidate.sdpMLineIndex,
+                    } if candidate else None
+                }
+                await ws.send(json.dumps(payload))
 
             track = CameraVideoTrack(cam_idx=camera_index)
             _camera_track = track
@@ -1151,50 +1100,40 @@ async def webrtc_client():
             offer = await _pc.createOffer()
             await _pc.setLocalDescription(offer)
             await ws.send(json.dumps({
-                'target': REMOTE_ID,
-                'type': 'offer',
-                'offer': {
-                    'sdp':  _pc.localDescription.sdp,
-                    'type': _pc.localDescription.type,
-                },
+                'target': REMOTE_ID, 'type': 'offer',
+                'offer': {'sdp':  _pc.localDescription.sdp,
+                          'type': _pc.localDescription.type},
             }))
-            print('Offer enviada, esperando answer de Flutter...')
+            print('Offer enviada, esperando answer...')
 
             async for raw in ws:
                 data = json.loads(raw)
-
                 if data.get('type') == 'answer':
-                    await _pc.setRemoteDescription(
-                        RTCSessionDescription(
-                            sdp=data['answer']['sdp'],
-                            type=data['answer']['type'],
-                        )
-                    )
+                    await _pc.setRemoteDescription(RTCSessionDescription(
+                        sdp=data['answer']['sdp'], type=data['answer']['type']))
                     print('WebRTC handshake completo')
-
                 if data.get('type') == 'candidate':
                     cand = data.get('candidate')
-                    if not cand:
-                        continue
+                    if not cand: continue
                     try:
-                        rtc_cand = candidate_from_sdp(cand['candidate'])
-                        rtc_cand.sdpMid        = cand.get('sdpMid') or '0'
-                        rtc_cand.sdpMLineIndex = cand.get('sdpMLineIndex') or 0
-                        await _pc.addIceCandidate(rtc_cand)
+                        rc = candidate_from_sdp(cand['candidate'])
+                        rc.sdpMid        = cand.get('sdpMid') or '0'
+                        rc.sdpMLineIndex = cand.get('sdpMLineIndex') or 0
+                        await _pc.addIceCandidate(rc)
                     except Exception as e:
                         print(f'Error ICE candidate: {e}')
-
     except Exception as e:
         print(f'Error en webrtc_client: {e}')
     finally:
         _webrtc_running = False
+
 
 # ============================================================
 # ARRANQUE
 # ============================================================
 
 dron = Dron()
-dron.navSpeed = 3.0
+dron.navSpeed  = 3.0
 dron._conn_str = None
 
 tello = TelloDron()

@@ -7,13 +7,13 @@ import '../provider.dart';
 import '../core/styles.dart';
 import '../core/fullscreen.dart';
 
-@JS('eval')
-external void _jsEval(String code);
+@JS('setDroneStreamRef')
+external void _jsSetDroneStreamRef();
 
 // ─────────────────────────────────────────────
 //  Modos de panel Tello (extensible)
 // ─────────────────────────────────────────────
-enum _TelloMode { none, flip, dance, follow }
+enum _TelloMode { none, flip, follow, orbit }
 
 class TelloFlightScreen extends StatefulWidget {
   const TelloFlightScreen({super.key});
@@ -174,6 +174,31 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
 }
 
 // ─────────────────────────────────────────────
+//  HELPER: bottom sheet de confirmación por slider
+// ─────────────────────────────────────────────
+void _showConfirmSlider(
+  BuildContext context, {
+  required String label,
+  required Color color,
+  required IconData icon,
+  required VoidCallback onConfirmed,
+}) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    builder: (_) => _ConfirmSliderSheet(
+      label: label,
+      color: color,
+      icon: icon,
+      onConfirmed: () {
+        Navigator.pop(context);
+        onConfirmed();
+      },
+    ),
+  );
+}
+
+// ─────────────────────────────────────────────
 //  HUD SUPERIOR
 // ─────────────────────────────────────────────
 class _HudBar extends StatelessWidget {
@@ -230,7 +255,13 @@ class _HudBar extends StatelessWidget {
               label: 'TAKEOFF',
               color: AppColors.primary,
               enabled: canTakeoff,
-              onTap: () => context.read<DronProvider>().takeOff(),
+              onTap: () => _showConfirmSlider(
+                context,
+                label: 'TAKEOFF',
+                color: AppColors.primary,
+                icon: Icons.flight_takeoff,
+                onConfirmed: () => context.read<DronProvider>().takeOff(),
+              ),
             ),
             const SizedBox(width: 6),
             _HudButton(
@@ -294,7 +325,13 @@ class _HudBar extends StatelessWidget {
               label: 'LAND',
               color: AppColors.warning,
               enabled: canLand,
-              onTap: () => context.read<DronProvider>().land(),
+              onTap: () => _showConfirmSlider(
+                context,
+                label: 'LAND',
+                color: AppColors.warning,
+                icon: Icons.flight_land,
+                onConfirmed: () => context.read<DronProvider>().land(),
+              ),
             ),
             const SizedBox(width: 6),
             _HudButton(
@@ -322,17 +359,18 @@ class _ModePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final IconData titleIcon = activeMode == _TelloMode.flip
-        ? Icons.flip_camera_android
-        : activeMode == _TelloMode.follow
-            ? Icons.directions_run
-            : Icons.music_note;
-
-    final String titleText = activeMode == _TelloMode.flip
-        ? 'FLIP MODE'
-        : activeMode == _TelloMode.follow
-            ? 'FOLLOW MODE'
-            : 'DANCE MODE';
+    final IconData titleIcon = switch (activeMode) {
+      _TelloMode.flip => Icons.flip_camera_android,
+      _TelloMode.follow => Icons.directions_run,
+      _TelloMode.orbit => Icons.rotate_right,
+      _TelloMode.none => Icons.tune,
+    };
+    final String titleText = switch (activeMode) {
+      _TelloMode.flip => 'FLIP MODE',
+      _TelloMode.follow => 'FOLLOW MODE',
+      _TelloMode.orbit => 'ORBIT MODE',
+      _TelloMode.none => '',
+    };
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -344,7 +382,6 @@ class _ModePanel extends StatelessWidget {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // Título del modo activo
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -363,8 +400,12 @@ class _ModePanel extends StatelessWidget {
           ),
           const SizedBox(height: 10),
           if (activeMode == _TelloMode.flip) _FlipButtons(provider: provider),
-          if (activeMode == _TelloMode.dance) _DanceButtons(provider: provider),
-          if (activeMode == _TelloMode.follow)
+          if (activeMode == _TelloMode.follow) ...[
+            _FollowStatusBadge(
+              status: provider.followStatus,
+              tofDistance: provider.tofDistance,
+            ),
+            const SizedBox(height: 8),
             _FlipBtn(
               icon: provider.isFollowMode
                   ? Icons.directions_run
@@ -373,6 +414,8 @@ class _ModePanel extends StatelessWidget {
               enabled: provider.isFlying,
               onTap: () => context.read<DronProvider>().toggleFollowMode(),
             ),
+          ],
+          if (activeMode == _TelloMode.orbit) _OrbitButtons(provider: provider),
         ],
       ),
     );
@@ -430,6 +473,117 @@ class _FlipButtons extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────
+//  BOTONES DE ORBIT (rodear objeto)
+// ─────────────────────────────────────────────
+/// Panel de control para el modo órbita.
+///
+/// Permite al usuario elegir la dirección de rotación (CW / CCW),
+/// ajustar el radio de la órbita y arrancar/detener la maniobra.
+/// La lógica de vuelo real (sendOrbit, etc.) debe implementarse
+/// en DronProvider cuando se conecte con el SDK del Tello.
+class _OrbitButtons extends StatefulWidget {
+  final DronProvider provider;
+  const _OrbitButtons({required this.provider});
+
+  @override
+  State<_OrbitButtons> createState() => _OrbitButtonsState();
+}
+
+class _OrbitButtonsState extends State<_OrbitButtons> {
+  double _radiusCm = 60;
+
+  @override
+  Widget build(BuildContext context) {
+    final bool enabled = widget.provider.isFlying;
+    final bool isRunning = widget.provider.isOrbitMode;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // ── Fila: botones CW / STOP / CCW
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Órbita sentido antihorario
+            _FlipBtn(
+              icon: Icons.rotate_left,
+              label: 'CCW',
+              enabled: enabled && !isRunning,
+              onTap: () => context.read<DronProvider>().startOrbit(
+                radiusCm: _radiusCm.toInt(),
+                clockwise: false,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Detener órbita
+            _FlipBtn(
+              icon: Icons.stop_circle_outlined,
+              label: 'STOP',
+              enabled: enabled && isRunning,
+              onTap: () => context.read<DronProvider>().stopOrbit(),
+            ),
+            const SizedBox(width: 8),
+            // Órbita sentido horario
+            _FlipBtn(
+              icon: Icons.rotate_right,
+              label: 'CW',
+              enabled: enabled && !isRunning,
+              onTap: () => context.read<DronProvider>().startOrbit(
+                radiusCm: _radiusCm.toInt(),
+                clockwise: true,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        // ── Slider de radio
+        SizedBox(
+          width: 220,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'RADIO: ${_radiusCm.toInt()} cm',
+                style: const TextStyle(
+                  color: AppColors.warning,
+                  fontSize: 9,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.0,
+                ),
+              ),
+              SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  activeTrackColor: AppColors.warning,
+                  inactiveTrackColor: AppColors.warning.withValues(alpha: 0.2),
+                  thumbColor: AppColors.warning,
+                  overlayColor: AppColors.warning.withValues(alpha: 0.15),
+                  trackHeight: 2,
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 6,
+                  ),
+                ),
+                child: Slider(
+                  value: _radiusCm,
+                  min: 30,
+                  max: 200,
+                  divisions: 17, // pasos de 10 cm
+                  onChanged: isRunning
+                      ? null // no se puede cambiar mientras orbita
+                      : (v) => setState(() => _radiusCm = v),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+//  BOTÓN GENÉRICO DE ACCIÓN (flip / orbit / follow)
+// ─────────────────────────────────────────────
 class _FlipBtn extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -631,6 +785,125 @@ class _HudButton extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
+//  CONFIRM SLIDER SHEET
+// ─────────────────────────────────────────────
+/// Bottom sheet con slider deslizable que el usuario debe arrastrar
+/// hasta el final para confirmar una acción crítica (TAKEOFF / LAND).
+/// Si se suelta antes del 95 %, el thumb vuelve al inicio automáticamente.
+class _ConfirmSliderSheet extends StatefulWidget {
+  final String label;
+  final Color color;
+  final IconData icon;
+  final VoidCallback onConfirmed;
+
+  const _ConfirmSliderSheet({
+    required this.label,
+    required this.color,
+    required this.icon,
+    required this.onConfirmed,
+  });
+
+  @override
+  State<_ConfirmSliderSheet> createState() => _ConfirmSliderSheetState();
+}
+
+class _ConfirmSliderSheetState extends State<_ConfirmSliderSheet> {
+  double _value = 0.0;
+  bool _confirmed = false;
+
+  void _onChanged(double v) {
+    if (_confirmed) return;
+    setState(() => _value = v);
+    if (v >= 0.95) {
+      setState(() {
+        _confirmed = true;
+        _value = 1.0;
+      });
+      // Pequeño delay visual antes de ejecutar la acción
+      Future.delayed(const Duration(milliseconds: 250), widget.onConfirmed);
+    }
+  }
+
+  void _onChangeEnd(double v) {
+    // Si no se llegó al umbral, rebota al inicio
+    if (!_confirmed) {
+      setState(() => _value = 0.0);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = widget.color;
+    final displayLabel = _confirmed
+        ? 'CONFIRMED!'
+        : 'SLIDE TO  ${widget.label}';
+
+    return Container(
+      margin: const EdgeInsets.fromLTRB(16, 0, 16, 32),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      decoration: BoxDecoration(
+        color: const Color(0xEE111111),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.6), width: 1.5),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ── Cabecera
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(widget.icon, color: color, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                displayLabel,
+                style: TextStyle(
+                  color: color,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.4,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          // ── Slider
+          SliderTheme(
+            data: SliderTheme.of(context).copyWith(
+              trackHeight: 10,
+              activeTrackColor: color.withValues(alpha: 0.85),
+              inactiveTrackColor: color.withValues(alpha: 0.15),
+              thumbColor: color,
+              overlayColor: color.withValues(alpha: 0.2),
+              thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 18),
+              overlayShape: const RoundSliderOverlayShape(overlayRadius: 26),
+            ),
+            child: Slider(
+              value: _value,
+              min: 0,
+              max: 1,
+              onChanged: _confirmed ? null : _onChanged,
+              onChangeEnd: _onChangeEnd,
+            ),
+          ),
+          const SizedBox(height: 8),
+          // ── Hint
+          if (!_confirmed)
+            Text(
+              'Arrastra hasta el final para confirmar',
+              style: TextStyle(
+                color: color.withValues(alpha: 0.55),
+                fontSize: 10,
+                letterSpacing: 0.5,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
 //  VIDEO VIEW (igual que flight_screen)
 // ─────────────────────────────────────────────
 class _VideoView extends StatefulWidget {
@@ -652,15 +925,7 @@ class _VideoViewState extends State<_VideoView> {
       setState(() {});
       Future.delayed(const Duration(milliseconds: 300), () {
         try {
-          _jsEval('''(function() {
-          var videos = document.querySelectorAll('video');
-          for (var v of videos) {
-            if (v.srcObject && v.srcObject.getVideoTracks().length > 0) {
-              window._droneStream = v.srcObject;
-              break;
-            }
-          }
-        })();''');
+          _jsSetDroneStreamRef();
         } catch (_) {}
       });
     });
@@ -676,11 +941,14 @@ class _VideoViewState extends State<_VideoView> {
   Widget build(BuildContext context) {
     return RTCVideoView(
       _renderer,
-      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitCover,
+      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
     );
   }
 }
 
+// ─────────────────────────────────────────────
+//  SELECTOR DE MODOS (bottom sheet)
+// ─────────────────────────────────────────────
 class _ModeSelectorSheet extends StatelessWidget {
   final _TelloMode activeMode;
   final void Function(_TelloMode) onSelect;
@@ -719,16 +987,16 @@ class _ModeSelectorSheet extends StatelessWidget {
                 onTap: () => onSelect(_TelloMode.flip),
               ),
               _ModeOption(
-                icon: Icons.music_note,
-                label: 'DANCE',
-                active: activeMode == _TelloMode.dance,
-                onTap: () => onSelect(_TelloMode.dance),
-              ),
-              _ModeOption(
                 icon: Icons.directions_run,
                 label: 'FOLLOW',
                 active: activeMode == _TelloMode.follow,
                 onTap: () => onSelect(_TelloMode.follow),
+              ),
+              _ModeOption(
+                icon: Icons.rotate_right,
+                label: 'ORBIT',
+                active: activeMode == _TelloMode.orbit,
+                onTap: () => onSelect(_TelloMode.orbit),
               ),
             ],
           ),
@@ -738,6 +1006,9 @@ class _ModeSelectorSheet extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────
+//  OPCIÓN DE MODO (tarjeta del selector)
+// ─────────────────────────────────────────────
 class _ModeOption extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -791,18 +1062,55 @@ class _ModeOption extends StatelessWidget {
   }
 }
 
-class _DanceButtons extends StatelessWidget {
-  final DronProvider provider;
-  const _DanceButtons({required this.provider});
+class _FollowStatusBadge extends StatelessWidget {
+  final String status;
+  final double tofDistance;
+  const _FollowStatusBadge({required this.status, required this.tofDistance});
 
   @override
   Widget build(BuildContext context) {
-    final bool enabled = provider.isFlying;
-    return _FlipBtn(
-      icon: Icons.music_note,
-      label: 'DANCE',
-      enabled: enabled,
-      onTap: () => context.read<DronProvider>().sendDance(),
+    final (label, color) = switch (status) {
+      'following' => ('● FOLLOWING', const Color(0xFF00E676)),
+      'tof' => ('● FOLLOWING (ToF)', const Color(0xFF00E676)),
+      'searching' => ('⟳ SEARCHING 360°', AppColors.warning),
+      'grace' => ('… HOLDING', const Color(0xFF29B6F6)),
+      'lost' => ('x TARGET LOST', AppColors.danger),
+      'waiting' => ('◌ WAITING', AppColors.textSecondary),
+      _ => ('— OFF', AppColors.disabled),
+    };
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withValues(alpha: 0.7), width: 1.2),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.1,
+            ),
+          ),
+        ),
+        if (tofDistance > 0) ...[
+          const SizedBox(height: 5),
+          Text(
+            'ToF: ${tofDistance.toStringAsFixed(0)} cm',
+            style: TextStyle(
+              color: color.withValues(alpha: 0.9),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

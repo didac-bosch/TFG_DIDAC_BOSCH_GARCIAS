@@ -341,6 +341,10 @@ class DronProvider extends ChangeNotifier {
   int? telloFlightTime;
 
   bool isFollowMode = false;
+  bool isOrbitMode = false;
+
+  String followStatus = 'off';
+  double tofDistance = -1.0;
 
   // metodos
 
@@ -407,6 +411,7 @@ class DronProvider extends ChangeNotifier {
   String? currentMissionPlanId;
   List<TelemetrySnapshot> _sessionLog = [];
   DateTime? _sessionStart;
+  bool _pendingMissionFlight = false;
 
   void setAltitude(String altValue) {
     final alt = double.tryParse(altValue.replaceAll(',', '.'));
@@ -575,6 +580,7 @@ class DronProvider extends ChangeNotifier {
 
   Future<void> startMission() async {
     if (!isConnected || !missionUploaded) return;
+    _pendingMissionFlight = true;
     _mqtt.publish(Constants.topicSpeed, flightSpeed.toString());
     _mqtt.publish(Constants.topicStartMission, 'start');
     isMissionMode = true;
@@ -659,7 +665,11 @@ class DronProvider extends ChangeNotifier {
         remoteStream = stream;
         notifyListeners();
       };
-      _webrtc.onTelemetry = (jsonStr) => _handleTelemetry(jsonStr);
+      _webrtc.onTelemetry = (jsonStr) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          _handleTelemetry(jsonStr);
+        });
+      };
 
       await _webrtc.connect(Constants.webrtcSignalUrl);
       startUserLocation();
@@ -800,14 +810,31 @@ class DronProvider extends ChangeNotifier {
     _mqtt.publish(Constants.topicFlip, dir);
   }
 
-  void sendDance() {
-    if (!isConnected || !isFlying) return;
-    _mqtt.publish(Constants.topicDance, 'dance');
+  void startOrbit({required int radiusCm, required bool clockwise}) {
+    if (!isConnected || !isFlying || isOrbitMode) return;
+    isOrbitMode = true;
+    _stopJoystickTimer();
+    final payload = '$radiusCm:${clockwise ? 'cw' : 'ccw'}';
+    _mqtt.publish(Constants.topicOrbit, payload);
+    notifyListeners();
+  }
+
+  void stopOrbit() {
+    if (!isConnected || !isOrbitMode) return;
+    isOrbitMode = false;
+    if (isFlying) _mqtt.publish(Constants.topicOrbit, 'stop');
+    _startJoystickTimer();
+    notifyListeners();
   }
 
   void toggleFollowMode() {
     if (!isConnected || !isFlying) return;
     isFollowMode = !isFollowMode;
+    if (isFollowMode) {
+      _stopJoystickTimer();
+    } else {
+      _startJoystickTimer();
+    }
     _mqtt.publish(Constants.topicFollowMode, isFollowMode ? 'true' : 'false');
     notifyListeners();
   }
@@ -844,6 +871,8 @@ class DronProvider extends ChangeNotifier {
       isFlying = false;
       _armConfirmed = false;
       _waitingForArm = false;
+      isFollowMode = false;
+      isOrbitMode = false;
       message = 'Motors disarmed automatically';
       notifyListeners();
       return;
@@ -854,7 +883,8 @@ class DronProvider extends ChangeNotifier {
       isMissionMode = missionUploaded;
       message = 'Flying';
       _startSession();
-      if (!isMissionMode) _startJoystickTimer();
+      if (!_pendingMissionFlight && !isMissionMode) _startJoystickTimer();
+      _pendingMissionFlight = false;
       notifyListeners();
       return;
     }
@@ -868,6 +898,8 @@ class DronProvider extends ChangeNotifier {
       missionUploaded = false;
       currentMissionPlanId = null;
       activeMissionWaypoint = -1;
+      isOrbitMode = false;
+      isFollowMode = false;
       message = 'Landed';
       notifyListeners();
       return;
@@ -910,6 +942,8 @@ class DronProvider extends ChangeNotifier {
       isLoading = false;
       isVideoActive = false;
       isRecording = false;
+      isFollowMode = false;
+      isOrbitMode = false;
       _waitingForConnect = false;
       detectionMode = DetectionMode.all;
       _waitingForArm = false;
@@ -952,39 +986,47 @@ class DronProvider extends ChangeNotifier {
 
   // -----------------------HANDLER DE TELEMETRIA----------------------------------
   void _handleTelemetry(String jsonStr) {
-    final status = jsonDecode(jsonStr);
-    currentAlt = (status['alt'] as num).toDouble();
-    currentBat = (status['battery_remaining'] as num).toDouble();
-    currentSpeed = (status['groundSpeed'] as num).toDouble();
-    currentHeading = (status['heading'] as num).toDouble();
-    currentState = status['state'] as String;
-    currentMode = status['flightMode'] as String;
-    currentLat = (status['lat'] as num).toDouble();
-    currentLon = (status['lon'] as num).toDouble();
-    currentVx = (status['vx'] as num).toDouble();
-    currentVy = (status['vy'] as num).toDouble();
+    try {
+      final status = jsonDecode(jsonStr) as Map<String, dynamic>;
+      currentAlt = (status['alt'] as num?)?.toDouble() ?? currentAlt;
+      currentBat =
+          (status['battery_remaining'] as num?)?.toDouble() ?? currentBat;
+      currentSpeed =
+          (status['groundSpeed'] as num?)?.toDouble() ?? currentSpeed;
+      currentHeading =
+          (status['heading'] as num?)?.toDouble() ?? currentHeading;
+      currentState = (status['state'] as String?) ?? currentState;
+      currentMode = (status['flightMode'] as String?) ?? currentMode;
+      currentLat = (status['lat'] as num?)?.toDouble() ?? currentLat;
+      currentLon = (status['lon'] as num?)?.toDouble() ?? currentLon;
+      currentVx = (status['vx'] as num?)?.toDouble() ?? currentVx;
+      currentVy = (status['vy'] as num?)?.toDouble() ?? currentVy;
 
-    if (currentLat != 0.0 && currentLon != 0.0) {
-      droneTrail.add(LatLng(currentLat, currentLon));
-      if (droneTrail.length > 100) droneTrail.removeAt(0);
+      if (currentLat != 0.0 && currentLon != 0.0) {
+        droneTrail.add(LatLng(currentLat, currentLon));
+        if (droneTrail.length > 100) droneTrail.removeAt(0);
+      }
+      if (isFlying && _sessionStart != null && currentLat != 0.0) {
+        _sessionLog.add(
+          TelemetrySnapshot(
+            timestamp: DateTime.now(),
+            lat: currentLat,
+            lon: currentLon,
+            alt: currentAlt,
+            speed: currentSpeed,
+            bat: currentBat,
+            heading: currentHeading,
+          ),
+        );
+      }
+      followStatus = (status['followStatus'] as String?) ?? 'off';
+      const double maxValidTofCm = 300.0;
+      final rawTof = (status['tofDistance'] as num?)?.toDouble() ?? -1.0;
+      tofDistance = (rawTof > 0 && rawTof <= maxValidTofCm) ? rawTof : -1.0;
+      notifyListeners();
+    } catch (e) {
+      debugPrint('[TELEMETRY] Parse error: $e');
     }
-
-    // Si el dron está volando, registrar snapshot de telemetría cada tick
-    if (isFlying && _sessionStart != null && currentLat != 0.0) {
-      _sessionLog.add(
-        TelemetrySnapshot(
-          timestamp: DateTime.now(),
-          lat: currentLat,
-          lon: currentLon,
-          alt: currentAlt,
-          speed: currentSpeed,
-          bat: currentBat,
-          heading: currentHeading,
-        ),
-      );
-    }
-
-    notifyListeners();
   }
 
   // Localización usuario

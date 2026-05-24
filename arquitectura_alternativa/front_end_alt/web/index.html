@@ -158,6 +158,17 @@
       setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
     };
 
+    // --------- Captura del stream WebRTC para grabación o snapshot -------------
+    function setDroneStreamRef() {
+      var videos = document.querySelectorAll('video');
+      for (var v of videos) {
+        if (v.srcObject && v.srcObject.getVideoTracks().length > 0) {
+          window._droneStream = v.srcObject;
+          break;
+        }
+      }
+    }
+
   </script>
 </head>
 
