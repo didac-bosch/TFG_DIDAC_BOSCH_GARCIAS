@@ -21,6 +21,12 @@ from simple_pid import PID
 from dronLink.Dron import Dron
 from TelloLink.Tello import TelloDron
 
+# evitar spam terminal
+import logging
+logging.getLogger('djitellopy').setLevel(logging.WARNING)
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning, module='torch')
+
 # ============================================================
 # CONSTANTES
 # ============================================================
@@ -53,11 +59,11 @@ _pending_actions  = []
 _follow_mode      = False
 _orbit_active     = False
 _orbit_thread     = None
+_ws = None
 
 # ============================================================
 # CALIBRACION CAMARA
 # ============================================================
-
 CALIB_FILE  = 'calibration_data_px.yaml'
 cam_matrix  = None
 dist_coefs  = None
@@ -119,11 +125,13 @@ class FollowController:
     FRAME_W = 960
     FRAME_H = 720
 
-    TARGET_RATIO        = 0.30
+    TARGET_RATIO        = 0.20
     RATIO_DEADZONE      = 0.03
 
     X_DEADZONE_PX       = 35
     Y_DEADZONE_PX       = 60
+    
+    TOF_SEARCH_OFFSET_PX = 60
 
     YOLO_FRAME_STRIDE   = 8
     EMA_ALPHA           = 0.35
@@ -141,11 +149,12 @@ class FollowController:
     STOP_DEADZONE_CM    = 8.0       # ±8 cm zona muerta ToF
     TOF_ACTIVATION_RATIO = 0.10     
     TOF_EMA_ALPHA       = 0.20      # suavizado agresivo señal ToF
+    TOF_MAX_INVALID_CYCLES = 8
 
     PID_YAW_KP,     PID_YAW_KI,     PID_YAW_KD     = -0.20, -0.003, -0.05
     PID_THR_KP,     PID_THR_KI,     PID_THR_KD     = 0.25, 0.002, 0.04  
-    PID_FB_BBOX_KP, PID_FB_BBOX_KI, PID_FB_BBOX_KD = 300.0,  0.0,   50.0
-    PID_FB_TOF_KP,  PID_FB_TOF_KI,  PID_FB_TOF_KD  =  0.10,  0.001,  0.02  # KD reducido
+    PID_FB_BBOX_KP, PID_FB_BBOX_KI, PID_FB_BBOX_KD = -150.0,  0.0,   -30.0
+    PID_FB_TOF_KP,  PID_FB_TOF_KI,  PID_FB_TOF_KD  =  0.10,  0.001,  0.02  
 
     SEARCH_LOST_S   = 2.0
     SEARCH_YAW      = 20
@@ -170,9 +179,16 @@ class FollowController:
         self._pitch_source_last = 'none'
 
         self._sdk_lock    = threading.Lock()
+        try:
+            self._tello._tello.send_keepalive = False
+        except Exception:
+            pass
+        self._rc_sdk_lock = threading.Lock()
         self.front_tof_cm = -1.0
         self._tof_ema     = -1.0    # EMA interno del ToF
-
+        self._tof_invalid_count = 0
+        self._tof_lock = threading.Lock()
+        
         self._rc_lock = threading.Lock()
         self._rc      = [0, 0, 0, 0]
 
@@ -182,15 +198,17 @@ class FollowController:
         # Inicializar status para telemetría (evita AttributeError antes del primer frame)
         self._follow_status = 'waiting'
         self._tof_display   = -1.0
-
         self._active = True
-
+        
         self._tof_thread = threading.Thread(target=self._tof_loop, daemon=True)
         self._tof_thread.start()
+        
         self._rc_thread = threading.Thread(target=self._rc_loop, daemon=True)
         self._rc_thread.start()
+        
         self._vid_thread = threading.Thread(target=self._video_loop, daemon=True)
         self._vid_thread.start()
+        
 
     def _tof_loop(self):
         while self._active:
@@ -201,22 +219,29 @@ class FollowController:
                     mm = int(raw.strip().split()[1])
                     raw_cm = -1.0 if mm >= 8190 else mm / 10.0
                     if raw_cm > 0:
+                        self._tof_invalid_count = 0
                         if self._tof_ema < 0:
-                            self._tof_ema = raw_cm          # inicializar EMA
+                            self._tof_ema = raw_cm
                         else:
                             self._tof_ema = (self.TOF_EMA_ALPHA * raw_cm
-                                             + (1 - self.TOF_EMA_ALPHA) * self._tof_ema)
+                                            + (1 - self.TOF_EMA_ALPHA) * self._tof_ema)
                         self.front_tof_cm = self._tof_ema
                     else:
+                        self._tof_invalid_count += 1
+                        if self._tof_invalid_count >= self.TOF_MAX_INVALID_CYCLES:
+                            self.front_tof_cm = -1.0
+                            self._tof_ema     = -1.0
+                else:
+                    self._tof_invalid_count += 1
+                    if self._tof_invalid_count >= self.TOF_MAX_INVALID_CYCLES:
                         self.front_tof_cm = -1.0
                         self._tof_ema     = -1.0
-                else:
+            except Exception:
+                self._tof_invalid_count += 1
+                if self._tof_invalid_count >= self.TOF_MAX_INVALID_CYCLES:
                     self.front_tof_cm = -1.0
                     self._tof_ema     = -1.0
-            except Exception:
-                self.front_tof_cm = -1.0
-                self._tof_ema     = -1.0
-            time.sleep(0.1)
+            time.sleep(0.05)
 
 
     def _detect_persons(self, frame_rgb):
@@ -299,9 +324,10 @@ class FollowController:
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
             actual_h, actual_w = frame_bgr.shape[:2]
-            ref_x = actual_w // 2
-            ref_y = actual_h // 2
-
+            ref_x = (actual_w // 2)
+            ref_y = int(actual_h / 2 - 150)
+            
+            
             if frame_count % self.YOLO_FRAME_STRIDE == 0:
                 detected_persons = self._detect_persons(frame_rgb)
 
@@ -317,8 +343,7 @@ class FollowController:
                 bw = x2 - x1
                 bh = y2 - y1
                 raw_cx    = float(x1 + bw / 2.0)
-                vertical_offset_px = 80
-                raw_cy    = shoulder_cy if shoulder_cy is not None else float(y1 + bh / 2.0) - vertical_offset_px
+                raw_cy    = shoulder_cy if shoulder_cy is not None else float(y1 + bh / 2.0)
                 raw_ratio = (bw * bh) / float(actual_w * actual_h)
 
                 if not ema_init:
@@ -342,8 +367,7 @@ class FollowController:
                     err_y = 0.0
                 throttle = int(self._pid_thr(err_y))
 
-                tof_valid = self.front_tof_cm > 0
-                use_tof   = tof_valid and (self.front_tof_cm < 100.0)
+                use_tof   =self.front_tof_cm > 0
 
                 if use_tof:
                     err_fb_tof = self.front_tof_cm - self.STOP_DISTANCE_CM
@@ -454,7 +478,7 @@ class FollowController:
             with self._rc_lock:
                 lr, fb, ud, yaw = self._rc
             try:
-                with self._sdk_lock:
+                with self._rc_sdk_lock:
                     self._tello.rc(lr, fb, ud, yaw)
             except Exception as e:
                 print(e)
@@ -472,6 +496,10 @@ class FollowController:
             self._tello.rc(0, 0, 0, 0)
         except Exception:
             pass
+        try:
+            self._tello._tello.send.keepalive = True
+        except Exception:
+            pass
 
     def reset_pids(self):
         self._pid_yaw.reset()
@@ -487,6 +515,7 @@ class FollowController:
             self._rc = [0, 0, 0, 0]
         with self._frame_lock:
             self._debug_frame = None
+        self._tof_invalid_count = 0
 
 
 _follow_ctrl: FollowController = None
@@ -495,16 +524,19 @@ _follow_ctrl: FollowController = None
 # ORBIT
 # ============================================================
 
-def _run_orbit(radius_cm: int, clockwise: bool):
+def run_orbit(radius_cm: int, clockwise: bool):
     global _orbit_active
+    print(f"[ORBIT] Iniciando — tello={tello}, state={tello.state if tello else 'None'}")
     yaw_speed = 30
-    fwd_speed = 20
+    fwd_speed = max(10, min(50, int(radius_cm * 0.15)))
     if not clockwise:
         yaw_speed = -yaw_speed
     try:
         interval = 1.0 / 20.0
         while _orbit_active:
+            print(f"[ORBIT] tick state={tello.state}")  # ← dentro del while
             if tello is None or tello.state != 'flying':
+                print(f"[ORBIT] Saliendo — state={tello.state}")
                 break
             t0 = time.time()
             tello.rc(0, fwd_speed, 0, yaw_speed)
@@ -552,12 +584,14 @@ def process_tello_telemetry():
                 'lon':              0.0,
                 'alt':              (getattr(tello, 'height_cm', 0) or 0) / 100.0,
                 'groundSpeed':      (vx**2 + vy**2)**0.5 / 100.0,
-                'batteryremaining': getattr(tello, 'battery_pct', 0) or 0,
+                'battery_remaining': getattr(tello, 'battery_pct', 0) or 0,
                 'heading':          getattr(tello, 'yaw_deg', 0) or 0,
                 'vx':               vx / 100.0,
                 'vy':               vy / 100.0,
                 'state':            tello.state,
                 'flightMode':       'TELLO',
+                'followStatus':     _follow_ctrl._follow_status if (_follow_ctrl and _follow_mode) else 'off',
+                'tofDistance':      _follow_ctrl._tof_display if (_follow_ctrl and _follow_mode) else -1.0,
             })
             if telemetry_channel is not None and telemetry_channel.readyState == 'open':
                 loop.call_soon_threadsafe(telemetry_channel.send, payload)
@@ -625,8 +659,8 @@ def on_message(client,userdata, message):
     global _orbit_active, _orbit_thread
 
     parts   = message.topic.split('/')
-    command = parts[2]
-    print(f'Comando recibido: {command}')
+    command = parts[2] if len(parts) > 2 else "PARTS ERROR"
+    print(f'Comando recibido: {command},payolad = {message.payload.decode()}')
 
     if command == 'setMode':
         mode = message.payload.decode().strip()
@@ -668,8 +702,8 @@ def on_message(client,userdata, message):
                 else:
                     print(f'[TELLO] Recuperacion de sesion - estado: "{tello.state}"')
                 if _pc is not None:
-                    try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
-                    except Exception: pass
+                    fut = asyncio.run_coroutine_threadsafe(_pc.close(), loop)
+                    fut.result(timeout=3)
                     _pc = None; _camera_track = None; telemetry_channel = None
                 client.publish('groundStation/mobileFlutter/connected', 'connected')
                 time.sleep(0.3)
@@ -696,6 +730,12 @@ def on_message(client,userdata, message):
                     client.publish('groundStation/mobileFlutter/disconnected', 'connection_failed')
                     return
             else:
+                if _ws is not None:
+                    try:
+                        fut = asyncio.run_coroutine_threadsafe(_ws.close(), loop)
+                        fut.result(timeout=5)
+                    except Exception: pass
+                
                 if _pc is not None:
                     try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
                     except Exception: pass
@@ -791,29 +831,42 @@ def on_message(client,userdata, message):
                 try: tello._tello.flip(d[0])
                 except Exception as e: print(f'[TELLO] Flip error: {e}')
 
-        if command == 'orbit':
-            global _orbit_active, _orbit_thread
-            if flight_mode == 'tello' and tello and tello.state == 'flying':
-                payload = message.payload.decode().strip()
-                if payload == 'stop':
-                    _orbit_active = False
-                elif not _orbit_active:
-                    # Desactivar follow mode si está activo
-                    if _follow_mode:
-                        _follow_mode = False
-                        if _follow_ctrl:
-                            _follow_ctrl.stop()
-
+    if command == 'orbit':
+        global _orbit_active, _orbit_thread
+        if flight_mode == 'tello' and tello and tello.state == 'flying':
+            payload = message.payload.decode().strip()
+            if payload == 'stop':
+                print("[ORBIT] - Rama STOP")
+                _orbit_active = False
+                if _orbit_thread and _orbit_thread.is_alive():
+                    _orbit_thread.join(timeout=0.3)
+            elif not _orbit_active:
+                print("[ORBIT] - Rama START")
+                if _follow_mode:
+                    print("[ORBIT] Deteniendo follow mode previo")
+                    _follow_mode = False
+                    if _follow_ctrl:
+                        _follow_ctrl.stop()
+                try:
                     parts_o   = payload.split(':')
                     radius_cm = int(parts_o[0])
                     clockwise = len(parts_o) > 1 and parts_o[1] == 'cw'
+                    print(f"[ORBIT] Parsed — radius_cm={radius_cm}, clockwise={clockwise}")
                     _orbit_active = True
                     _orbit_thread = threading.Thread(
-                        target=_run_orbit,
+                        target=run_orbit,
                         args=(radius_cm, clockwise),
                         daemon=True
                     )
                     _orbit_thread.start()
+                    print(f"[ORBIT] Thread lanzado — alive={_orbit_thread.is_alive()}")
+                except Exception as e:
+                    print(f"[ORBIT] EXCEPCIÓN en launch: {e}")
+            else:
+                print(f"[ORBIT] - Ignorado — _orbit_active ya es True")
+        else:
+            print(f"[ORBIT] - Condición de guarda FALLÓ — flight_mode={flight_mode}, tello={tello is not None}, state={tello.state if tello else 'None'}")
+
 
     if command == 'followMode':
         if flight_mode == 'tello' and tello is not None:
@@ -822,6 +875,10 @@ def on_message(client,userdata, message):
                 return
             _follow_mode = new_state
             if _follow_mode:
+                if _orbit_active:
+                    _orbit_active = False
+                    if _orbit_thread and _orbit_thread.is_alive():
+                        _orbit_thread.join(timeout=0.5)
                 if _follow_ctrl is None:
                     _follow_ctrl = FollowController(tello)
                 else:
@@ -836,6 +893,11 @@ def on_message(client,userdata, message):
                         _follow_ctrl._vid_thread = threading.Thread(
                             target=_follow_ctrl._video_loop, daemon=True)
                         _follow_ctrl._vid_thread.start()
+                    if not _follow_ctrl._tof_thread.is_alive():
+                        _follow_ctrl._tof_thread = threading.Thread(
+                            target=_follow_ctrl._tof_loop, daemon=True)
+                        _follow_ctrl._tof_thread.start()
+
                 print('[TELLO] Follow mode ACTIVADO')
             else:
                 if _follow_ctrl: _follow_ctrl.stop()
@@ -867,15 +929,21 @@ def on_message(client,userdata, message):
             threading.Thread(target=desconectar_tello, daemon=True).start()
             return
         def desconectar():
-            global _pc, _camera_track
+            global _pc, _camera_track, _ws
             try: dron.stop_sending_telemetry_info()
             except Exception: pass
+            client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
             dron.disconnect()
+            if _ws is not None:
+                try:
+                    fut = asyncio.run_coroutine_threadsafe(_ws.close(), loop)
+                    fut.result(timeout=5)
+                except Exception: pass
+                
             if _pc:
                 try: asyncio.run_coroutine_threadsafe(_pc.close(), loop)
                 except Exception as e: print(f'Error cerrando PC: {e}')
             _pc = None; _camera_track = None
-            client.publish('groundStation/mobileFlutter/disconnected', 'disconnected')
         threading.Thread(target=desconectar).start()
 
     if command == 'uploadMission':
@@ -1046,7 +1114,7 @@ class CameraVideoTrack(VideoStreamTrack):
 # ============================================================
 
 async def webrtc_client():
-    global _pc, telemetry_channel, _camera_track, _webrtc_running
+    global _pc, telemetry_channel, _camera_track, _webrtc_running, _ws
 
     if _webrtc_running:
         print('[WEBRTC] Ya hay una sesion activa, ignorando.')
@@ -1064,6 +1132,7 @@ async def webrtc_client():
 
     try:
         async with websockets.connect(SIGNAL_URL, ssl=ssl_ctx) as ws:
+            _ws = ws
             await ws.send(MY_ID)
             await ws.send(json.dumps({
                 'target': REMOTE_ID, 'type': 'ice_config',
@@ -1125,7 +1194,11 @@ async def webrtc_client():
     except Exception as e:
         print(f'Error en webrtc_client: {e}')
     finally:
+        _ws = None
         _webrtc_running = False
+        _pc = None
+        telemetry_channel = None
+        _camera_track = None
 
 
 # ============================================================

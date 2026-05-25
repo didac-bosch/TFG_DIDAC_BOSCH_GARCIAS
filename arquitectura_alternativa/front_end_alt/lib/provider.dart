@@ -30,9 +30,6 @@ enum DetectionMode { all, person, none }
 // Modos de conexión al dron
 enum DroneConnectionMode { ardupilot, sitl, tello }
 
-//flag de control
-bool _waitingForConnect = false;
-
 // ------ FLIGHT LOG -------------------
 // Snapshot de telemetría — se guarda cada tick mientras el dron está volando
 class TelemetrySnapshot {
@@ -305,6 +302,7 @@ class DronProvider extends ChangeNotifier {
   bool isConnected = false;
   bool isArmed = false;
   bool isFlying = false;
+  bool _waitingForConnect = false;
 
   double takeoffAltitude = 7.0;
   double flightSpeed = 3.0;
@@ -412,6 +410,9 @@ class DronProvider extends ChangeNotifier {
   List<TelemetrySnapshot> _sessionLog = [];
   DateTime? _sessionStart;
   bool _pendingMissionFlight = false;
+
+  bool _connectingInProgress = false;
+  Timer? _connectionTimeoutTimer;
 
   void setAltitude(String altValue) {
     final alt = double.tryParse(altValue.replaceAll(',', '.'));
@@ -602,16 +603,25 @@ class DronProvider extends ChangeNotifier {
 
   // -----------------------CONECTAR----------------------------------
   Future<void> connectDron() async {
+    // Guard síncrono: evita doble-tap antes de que el rebuild deshabilite el botón
+    if (_connectingInProgress) return;
+    _connectingInProgress = true;
+
     isLoading = true;
     _waitingForConnect =
-        false; //  reset por si se intenta conectar de nuevo tras un fallo
-    isFlying = false; //   durante la ventana inicial serán ignorados
+        false; // reset por si se intenta conectar tras un fallo
+    isFlying = false;
     message = 'Trying to connect...';
     notifyListeners();
 
     try {
-      await _mqtt.connect();
+      await _webrtc.disconnect();
+    } catch (
+      _
+    ) {} // por si quedó una conexión WebRTC colgada de un intento previo
 
+    try {
+      await _mqtt.connect();
       _mqtt.subscribe(Constants.topicConnected);
       _mqtt.subscribe(Constants.topicArmed);
       _mqtt.subscribe(Constants.topicDisarmed);
@@ -632,35 +642,31 @@ class DronProvider extends ChangeNotifier {
       _mqtt.publish(Constants.topicSetMode, modeStr);
 
       // 2. Flush window: dejamos pasar los retained messages del broker
-      //    (_waitingForConnect = false - serán ignorados en _handleMessage)
+      //    (_waitingForConnect = false — serán ignorados en _handleMessage)
       await Future.delayed(const Duration(milliseconds: 500));
 
-      // 3. A partir de aquí sí esperamos el connected real
+      // 3. A partir de aquí sí esperamos el topicConnected real
+      //    Todos los modos (incluido Tello) esperan la confirmación MQTT.
+      //    La ET publica topicConnected tanto para ArduPilot/SITL como para Tello.
       _waitingForConnect = true;
-      if (droneConnectionMode == DroneConnectionMode.tello) {
-        await Future.delayed(const Duration(milliseconds: 300));
-        _waitingForConnect = false;
-        isConnected = true;
-        isLoading = false;
-        message = 'Connection established!';
-        notifyListeners();
-      }
 
-      // 4. Timeout de conexión: 20 s
-      Timer(const Duration(seconds: 20), () {
+      // 4. Timeout de conexión: 20 s — timer cancelable
+      _connectionTimeoutTimer?.cancel();
+      _connectionTimeoutTimer = Timer(const Duration(seconds: 20), () {
         if (_waitingForConnect) {
           _waitingForConnect = false;
+          _connectingInProgress = false;
           isLoading = false;
           message = 'Connection timeout — drone not responding';
           notifyListeners();
         }
       });
 
+      // 5. Configurar cámara y enviar comando connect
       _mqtt.publish(Constants.topicSetCamera, cameraIndex.toString());
-
-      // 5. Comando connect
       _mqtt.publish(Constants.topicConnect, 'connect');
 
+      // 6. Configurar callbacks WebRTC antes de conectar
       _webrtc.onRemoteStream = (stream) {
         remoteStream = stream;
         notifyListeners();
@@ -672,11 +678,15 @@ class DronProvider extends ChangeNotifier {
       };
 
       await _webrtc.connect(Constants.webrtcSignalUrl);
+
+      // 7. Iniciar GPS cancelando suscripción previa si existía
       startUserLocation();
     } catch (error) {
+      _connectionTimeoutTimer?.cancel();
       _waitingForConnect = false;
-      message = '$error';
+      _connectingInProgress = false;
       isLoading = false;
+      message = '$error';
       notifyListeners();
     }
   }
@@ -705,15 +715,63 @@ class DronProvider extends ChangeNotifier {
   }
 
   // -----------------------DESCONECTAR----------------------------------
-  Future<void> disconnectDron() async {
+  Future disconnectDron() async {
+    _connectingInProgress = false;
+    _connectionTimeoutTimer?.cancel();
+    _waitingForConnect = false;
     if (!isConnected) return;
+
     isLoading = true;
     message = 'Disconnecting...';
     notifyListeners();
 
     _stopJoystickTimer();
-    await _webrtc.disconnect();
-    _mqtt.publish(Constants.topicDisconnect, 'disconnect');
+    _locationSub?.cancel();
+    _locationSub = null;
+
+    // Desconectar WebRTC primero
+    try {
+      await _webrtc.disconnect();
+    } catch (_) {}
+    try {
+      _mqtt.publish(Constants.topicDisconnect, 'disconnect');
+    } catch (_) {}
+    await Future.delayed(const Duration(milliseconds: 300));
+
+
+    // Limpiar estado LOCAL ahora, sin esperar confirmación de la ET
+    _mqtt.disconnect();
+    stopUserLocation();
+    _endSession(completed: false);
+    isConnected = false;
+    isArmed = false;
+    isFlying = false;
+    isLoading = false;
+    isVideoActive = false;
+    isRecording = false;
+    isFollowMode = false;
+    isOrbitMode = false;
+    detectionMode = DetectionMode.all;
+    _waitingForArm = false;
+    _armConfirmed = false;
+    currentAlt = 0.0;
+    currentBat = 0.0;
+    currentSpeed = 0.0;
+    currentHeading = 0.0;
+    currentState = 'Unknown';
+    currentMode = 'Unknown';
+    currentVx = 0.0;
+    currentVy = 0.0;
+    droneTrail.clear();
+    remoteStream = null;
+    cameraIndex = 1;
+    zoomLevel = 1.0;
+    missionUploaded = false;
+    isMissionMode = false;
+    activeMissionWaypoint = -1;
+    currentMissionPlanId = null;
+    message = 'Awaiting orders';
+    notifyListeners();
   }
 
   // -----------------------DESPEGAR----------------------------------
@@ -805,8 +863,15 @@ class DronProvider extends ChangeNotifier {
   }
 
   // Métodos tello
+  DateTime? _lastFlipTime;
   void sendFlip(String dir) {
     if (!isConnected || !isFlying) return;
+    final now = DateTime.now();
+    if (_lastFlipTime != null &&
+        now.difference(_lastFlipTime!) < const Duration(seconds: 3)) {
+      return;
+    }
+    _lastFlipTime = now;
     _mqtt.publish(Constants.topicFlip, dir);
   }
 
@@ -814,7 +879,7 @@ class DronProvider extends ChangeNotifier {
     if (!isConnected || !isFlying || isOrbitMode) return;
     isOrbitMode = true;
     _stopJoystickTimer();
-    final payload = '$radiusCm:${clockwise ? 'cw' : 'ccw'}';
+    final payload = '$radiusCm:${clockwise ? "cw" : "ccw"}';
     _mqtt.publish(Constants.topicOrbit, payload);
     notifyListeners();
   }
@@ -848,6 +913,8 @@ class DronProvider extends ChangeNotifier {
   void _handleMessage(String topic, String payload) {
     if (topic == Constants.topicConnected) {
       if (!_waitingForConnect) return; // descarta retained/stale messages
+      _connectionTimeoutTimer?.cancel(); // ← añadir
+      _connectingInProgress = false;
       _waitingForConnect = false;
       isConnected = true;
       isLoading = false;
@@ -964,6 +1031,8 @@ class DronProvider extends ChangeNotifier {
       isMissionMode = false;
       activeMissionWaypoint = -1;
       currentMissionPlanId = null;
+      _connectingInProgress = false;
+      _connectionTimeoutTimer?.cancel();
       _mqtt.disconnect();
       stopUserLocation();
 

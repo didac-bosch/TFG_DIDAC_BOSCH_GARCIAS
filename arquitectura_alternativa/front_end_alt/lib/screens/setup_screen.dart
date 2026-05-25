@@ -20,9 +20,10 @@ class SetupScreen extends StatelessWidget {
 
     // Mostrar error de conexión si se ha producido
     if (provider.connectionErrorMode != null) {
+      final mode = provider.connectionErrorMode!;
+      provider.clearConnectionError(); 
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        final mode = provider.connectionErrorMode!;
-        provider.clearConnectionError();
+        if (!context.mounted) return; // guard de safety
         showDialog(
           context: context,
           builder: (_) => AlertDialog(
@@ -819,7 +820,7 @@ class _StartFlightButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool enabled =
-        !provider.isLoading && provider.isConnected && provider.isConfigValid;
+        !provider.isLoading && provider.isConnected && provider.isConfigValid && !provider.isFlying;
 
     final Color modeColor = switch (provider.selectedMode) {
       ControlMode.classic => AppColors.primary,

@@ -3,12 +3,10 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-
-
-const String _myId = 'browser';     //IDs para el handshake webrtc
+const String _myId = 'browser'; //IDs para el handshake webrtc
 const String _remoteId = 'python';
 
-class WebRTCLogic {          
+class WebRTCLogic {
   RTCPeerConnection? _pc;
   WebSocketChannel? _ws;
   RTCDataChannel? _joystickChannel;
@@ -57,27 +55,29 @@ class WebRTCLogic {
 
     await _setupPC(config);
 
-    // Procesar mensajes que llegan mientras se espera 
+    // Procesar mensajes que llegan mientras se espera
     for (final msg in List.of(_msgQueue)) {
       await _handleSignaling(msg);
     }
     _msgQueue.clear();
   }
 
-  Future<void> _setupPC(Map<String, dynamic> config) async {     
+  Future<void> _setupPC(Map<String, dynamic> config) async {
     _pc = await createPeerConnection(config);
 
-    _pc!.onTrack = (event) {    //video track
+    _pc!.onTrack = (event) {
+      //video track
       if (event.streams.isNotEmpty) onRemoteStream?.call(event.streams[0]);
     };
 
-    _pc!.onDataChannel = (channel) {      //Data channels de telemetría y para el joystick
+    _pc!.onDataChannel = (channel) {
+      //Data channels de telemetría y para el joystick
       if (channel.label == 'joystick') {
         _joystickChannel = channel;
       } else if (channel.label == 'telemetry') {
         _telemetryChannel = channel;
         _telemetryChannel!.onMessage = (RTCDataChannelMessage message) {
-          onTelemetry?.call(message.text);  
+          onTelemetry?.call(message.text);
         };
       }
     };
@@ -97,10 +97,11 @@ class WebRTCLogic {
       );
     };
 
-    _pcReady = true;  //listo para procesar mensajes
+    _pcReady = true; //listo para procesar mensajes
   }
 
-  Future<void> _handleSignaling(Map<String, dynamic> data) async {    //flutter recibe la offer de la ET y envía la answer para el signaling 
+  Future<void> _handleSignaling(Map<String, dynamic> data) async {
+    //flutter recibe la offer de la ET y envía la answer para el signaling
     if (data['type'] == 'offer') {
       final offer = data['offer'] as Map;
       await _pc!.setRemoteDescription(
@@ -128,12 +129,12 @@ class WebRTCLogic {
             cand['sdpMLineIndex'],
           ),
         );
-      } catch (_) {
-      }
+      } catch (_) {}
     }
   }
 
-  void sendJoystick(double lx, double ly, double rx, double ry) {   //Se convierten los 4 ejes como JSON y se envían por el DataChannel 
+  void sendJoystick(double lx, double ly, double rx, double ry) {
+    //Se convierten los 4 ejes como JSON y se envían por el DataChannel
     if (_joystickChannel == null) return;
     if (_joystickChannel!.state != RTCDataChannelState.RTCDataChannelOpen) {
       return;
@@ -148,10 +149,17 @@ class WebRTCLogic {
   Future<void> disconnect() async {
     _pcReady = false;
     _msgQueue.clear();
-    await _pc?.close();
-    await _ws?.sink.close();
+
+    try {
+      await _pc?.close();
+    } catch (_) {}
     _pc = null;
+
+    try {
+      _ws?.sink.close();
+    } catch (_) {}
     _ws = null;
+
     _joystickChannel = null;
     _telemetryChannel = null;
   }

@@ -18,7 +18,7 @@ class Constants {
   static const String topicStartMission = 'mobileFlutter/groundStation/startMission';
   // Tello
   static const String topicFlip = 'mobileFlutter/groundStation/flip';
-  static const String topicOrbit = 'drone/tello/orbit';
+  static const String topicOrbit = 'mobileFlutter/groundStation/orbit';
   static const String topicFollowMode = 'mobileFlutter/groundStation/followMode';
 
   // Camera
