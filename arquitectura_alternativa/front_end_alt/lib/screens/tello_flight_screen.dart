@@ -5,25 +5,31 @@ import 'package:flutter_joystick/flutter_joystick.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../provider.dart';
 import '../core/styles.dart';
-import '../core/fullscreen.dart';
+import '../core/js_bridges.dart';
 
 @JS('setDroneStreamRef')
 external void _jsSetDroneStreamRef();
 
-// ─────────────────────────────────────────────
-//  Modos de panel Tello (extensible)
-// ─────────────────────────────────────────────
 enum _TelloMode { none, flip, follow, orbit }
 
 class TelloFlightScreen extends StatefulWidget {
   const TelloFlightScreen({super.key});
-
   @override
   State<TelloFlightScreen> createState() => _TelloFlightScreenState();
 }
 
 class _TelloFlightScreenState extends State<TelloFlightScreen> {
   _TelloMode _activeMode = _TelloMode.none;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final p = context.read<DronProvider>();
+      if (p.isFollowMode) setState(() => _activeMode = _TelloMode.follow);
+      if (p.isOrbitMode) setState(() => _activeMode = _TelloMode.orbit);
+    });
+  }
 
   void _toggleMode(_TelloMode mode) {
     setState(() {
@@ -37,13 +43,13 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
     final isPortrait = screenH > screenW;
-    final joystickSize = isPortrait ? screenH * 0.18 : screenH * 0.36;
+    final joystickSize = isPortrait ? screenH * 0.22 : screenH * 0.40;
 
     return Scaffold(
       backgroundColor: Colors.black,
       body: Stack(
         children: [
-          // ── 1. VÍDEO fondo completo
+          // 1. VÍDEO fondo completo
           Positioned.fill(
             child: provider.remoteStream != null
                 ? _VideoView(stream: provider.remoteStream!)
@@ -58,7 +64,7 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
                   ),
           ),
 
-          // ── 2. HUD SUPERIOR
+          // 2. HUD SUPERIOR
           Positioned(
             top: 0,
             left: 0,
@@ -89,10 +95,10 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
             ),
           ),
 
-          // ── 3. PANEL DE MODO (overlay inferior)
+          // 3. PANEL DE MODO overlay inferior
           if (_activeMode != _TelloMode.none)
             Positioned(
-              bottom: isPortrait ? joystickSize + 24 : 12,
+              bottom: isPortrait ? joystickSize + 28 : 16,
               left: 0,
               right: 0,
               child: Center(
@@ -100,7 +106,37 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
               ),
             ),
 
-          // ── 4. JOYSTICK IZQUIERDO
+          // Badge REC
+          if (provider.isRecording)
+            Positioned(
+              bottom: isPortrait ? joystickSize + 8 : 8,
+              left: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+                decoration: BoxDecoration(
+                  color: AppColors.danger.withValues(alpha: 0.85),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.circle, color: Colors.white, size: 7),
+                    SizedBox(width: 5),
+                    Text(
+                      'REC',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        letterSpacing: 1.0,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // 4. JOYSTICK IZQUIERDO
           Positioned(
             left: 16,
             bottom: 16,
@@ -134,7 +170,7 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
                   ),
           ),
 
-          // ── 5. JOYSTICK DERECHO
+          // 5. JOYSTICK DERECHO
           Positioned(
             right: 16,
             bottom: 16,
@@ -174,7 +210,7 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
 }
 
 // ─────────────────────────────────────────────
-//  HELPER: bottom sheet de confirmación por slider
+// HELPER confirm slider
 // ─────────────────────────────────────────────
 void _showConfirmSlider(
   BuildContext context, {
@@ -199,7 +235,49 @@ void _showConfirmSlider(
 }
 
 // ─────────────────────────────────────────────
-//  HUD SUPERIOR
+// BOTÓN CIRCULAR (estilo app Tello oficial)
+// ─────────────────────────────────────────────
+class _CircleHudBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  final bool active;
+  final Color? activeColor;
+
+  const _CircleHudBtn({
+    required this.icon,
+    required this.onTap,
+    this.active = false,
+    this.activeColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = activeColor ?? AppColors.textPrimary;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 44,
+        height: 44,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: active
+              ? color.withValues(alpha: 0.25)
+              : Colors.white.withValues(alpha: 0.12),
+          border: Border.all(
+            color: active
+                ? color.withValues(alpha: 0.9)
+                : Colors.white.withValues(alpha: 0.55),
+            width: active ? 2.0 : 1.5,
+          ),
+        ),
+        child: Icon(icon, color: active ? color : Colors.white, size: 20),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// HUD SUPERIOR
 // ─────────────────────────────────────────────
 class _HudBar extends StatelessWidget {
   final DronProvider provider;
@@ -222,7 +300,7 @@ class _HudBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final bat = provider.currentBat;
     final batColor = bat > 30
-        ? AppColors.primary
+        ? Colors.white
         : bat > 15
         ? AppColors.warning
         : AppColors.danger;
@@ -231,117 +309,106 @@ class _HudBar extends StatelessWidget {
         provider.isConnected && !provider.isFlying && !provider.isLoading;
     final bool canLand =
         provider.isConnected && provider.isFlying && !provider.isLoading;
-    // DISCONNECT solo si conectado y NO volando (state == connected en TelloLink)
     final bool canDisconnect =
         provider.isConnected && !provider.isFlying && !provider.isLoading;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
-          colors: [Colors.black87, Colors.transparent],
+          colors: [Color(0xCC000000), Colors.transparent],
         ),
       ),
       child: SafeArea(
         bottom: false,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            // ── Izquierda: TAKEOFF + MODES
-            _HudButton(
-              icon: Icons.flight_takeoff,
-              label: 'TAKEOFF',
-              color: AppColors.primary,
-              enabled: canTakeoff,
-              onTap: () => _showConfirmSlider(
-                context,
-                label: 'TAKEOFF',
-                color: AppColors.primary,
-                icon: Icons.flight_takeoff,
-                onConfirmed: () => context.read<DronProvider>().takeOff(),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Izquierda: TAKEOFF o LAND (alternante según isFlying) + MODES
+              _CircleHudBtn(
+                icon: provider.isFlying
+                    ? Icons.flight_land
+                    : Icons.flight_takeoff,
+                activeColor: provider.isFlying
+                    ? AppColors.warning
+                    : AppColors.primary,
+                active: provider.isConnected,
+                onTap: provider.isFlying
+                    ? (canLand
+                          ? () => _showConfirmSlider(
+                              context,
+                              label: 'LAND',
+                              color: AppColors.warning,
+                              icon: Icons.flight_land,
+                              onConfirmed: () =>
+                                  context.read<DronProvider>().land(),
+                            )
+                          : () {})
+                    : (canTakeoff
+                          ? () => _showConfirmSlider(
+                              context,
+                              label: 'TAKEOFF',
+                              color: AppColors.primary,
+                              icon: Icons.flight_takeoff,
+                              onConfirmed: () =>
+                                  context.read<DronProvider>().takeOff(),
+                            )
+                          : () {}),
               ),
-            ),
-            const SizedBox(width: 6),
-            _HudButton(
-              icon: Icons.tune,
-              label: 'MODES',
-              color: activeMode != _TelloMode.none
-                  ? AppColors.warning
-                  : AppColors.textSecondary,
-              enabled: provider.isConnected,
-              active: activeMode != _TelloMode.none,
-              onTap: () => onShowModeSelector(context),
-            ),
+              const SizedBox(width: 10),
+              _CircleHudBtn(
+                icon: Icons.tune,
+                active: activeMode != _TelloMode.none,
+                activeColor: AppColors.warning,
+                onTap: provider.isConnected
+                    ? () => onShowModeSelector(context)
+                    : () {},
+              ),
 
-            // ── Centro: telemetría
-            Expanded(
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
+              // Centro: telemetría pill
+              Expanded(
+                child: Center(
+                  child: _TelemetryPill(provider: provider, batColor: batColor),
+                ),
+              ),
+
+              // Derecha: DISCONNECT + Photo + Video
+              _CircleHudBtn(
+                icon: Icons.link_off,
+                activeColor: AppColors.danger,
+                onTap: canDisconnect ? onDisconnect : () {},
+              ),
+              const SizedBox(width: 10),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  _HudStat(
-                    icon: Icons.battery_full,
-                    iconColor: batColor,
-                    label: 'BAT',
-                    value: '${bat.toInt()}%',
-                    valueColor: batColor,
+                  _CircleHudBtn(
+                    icon: Icons.camera_alt_outlined,
+                    onTap: () => context.read<DronProvider>().capturePhoto(),
                   ),
-                  _HudStat(
-                    icon: Icons.height,
-                    label: 'ALT',
-                    value: '${provider.currentAlt.toStringAsFixed(1)}m',
+                  const SizedBox(height: 6),
+                  _CircleHudBtn(
+                    icon: provider.isRecording
+                        ? Icons.stop_rounded
+                        : Icons.fiber_manual_record,
+                    active: provider.isRecording,
+                    activeColor: AppColors.danger,
+                    onTap: () {
+                      if (provider.isRecording) {
+                        context.read<DronProvider>().stopRecording();
+                      } else {
+                        context.read<DronProvider>().startRecording();
+                      }
+                    },
                   ),
-                  _HudStat(
-                    icon: Icons.speed,
-                    label: 'SPD',
-                    value: '${provider.currentSpeed.toStringAsFixed(1)}m/s',
-                  ),
-                  if (provider.telloWifi != null)
-                    _HudStat(
-                      icon: Icons.wifi,
-                      label: 'WiFi',
-                      value: '${provider.telloWifi}',
-                    ),
-                  if (provider.telloTempC != null)
-                    _HudStat(
-                      icon: Icons.thermostat,
-                      label: 'TEMP',
-                      value: '${provider.telloTempC!.toStringAsFixed(0)}°C',
-                    ),
-                  if (provider.telloFlightTime != null)
-                    _HudStat(
-                      icon: Icons.timer,
-                      label: 'TIME',
-                      value: '${provider.telloFlightTime}s',
-                    ),
                 ],
               ),
-            ),
-
-            // ── Derecha: LAND + DISCONNECT
-            _HudButton(
-              icon: Icons.flight_land,
-              label: 'LAND',
-              color: AppColors.warning,
-              enabled: canLand,
-              onTap: () => _showConfirmSlider(
-                context,
-                label: 'LAND',
-                color: AppColors.warning,
-                icon: Icons.flight_land,
-                onConfirmed: () => context.read<DronProvider>().land(),
-              ),
-            ),
-            const SizedBox(width: 6),
-            _HudButton(
-              icon: Icons.link_off,
-              label: 'DISC',
-              color: AppColors.danger,
-              enabled: canDisconnect,
-              onTap: onDisconnect,
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );
@@ -349,12 +416,120 @@ class _HudBar extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  PANEL DE MODOS
+// TELEMETRÍA PILL (centro HUD)
+// ─────────────────────────────────────────────
+class _TelemetryPill extends StatelessWidget {
+  final DronProvider provider;
+  final Color batColor;
+  const _TelemetryPill({required this.provider, required this.batColor});
+
+  Widget _div() => Container(
+    width: 1,
+    height: 12,
+    margin: const EdgeInsets.symmetric(horizontal: 7),
+    color: Colors.white.withValues(alpha: 0.2),
+  );
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xCC1A1A1A),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.12),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.battery_full_rounded, color: batColor, size: 13),
+          const SizedBox(width: 3),
+          Text(
+            '${provider.currentBat.toInt()}%',
+            style: TextStyle(
+              color: batColor,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          if (provider.telloWifi != null) ...[
+            _div(),
+            Icon(Icons.wifi, color: Colors.white70, size: 12),
+            const SizedBox(width: 2),
+            Text(
+              '${provider.telloWifi}',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+          _div(),
+          Text(
+            'HS ',
+            style: const TextStyle(color: Colors.white54, fontSize: 9),
+          ),
+          Text(
+            '${provider.currentSpeed.toStringAsFixed(1)}m/s',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          _div(),
+          Text(
+            'H ',
+            style: const TextStyle(color: Colors.white54, fontSize: 9),
+          ),
+          Text(
+            '${provider.currentAlt.toStringAsFixed(1)}m',
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          if (provider.telloTempC != null) ...[
+            _div(),
+            Icon(Icons.thermostat, color: Colors.white54, size: 12),
+            Text(
+              '${provider.telloTempC!.toStringAsFixed(0)}°',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+          if (provider.telloFlightTime != null) ...[
+            _div(),
+            Icon(Icons.timer_outlined, color: Colors.white54, size: 12),
+            Text(
+              '${provider.telloFlightTime}s',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// PANEL DE MODOS
 // ─────────────────────────────────────────────
 class _ModePanel extends StatelessWidget {
   final _TelloMode activeMode;
   final DronProvider provider;
-
   const _ModePanel({required this.activeMode, required this.provider});
 
   @override
@@ -373,11 +548,11 @@ class _ModePanel extends StatelessWidget {
     };
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
       decoration: BoxDecoration(
-        color: Colors.black.withValues(alpha: 0.65),
-        border: Border.all(color: AppColors.warning.withValues(alpha: 0.6)),
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xDD111111),
+        border: Border.all(color: AppColors.warning.withValues(alpha: 0.5)),
+        borderRadius: BorderRadius.circular(16),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -385,33 +560,34 @@ class _ModePanel extends StatelessWidget {
           Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(titleIcon, color: AppColors.warning, size: 14),
+              Icon(titleIcon, color: AppColors.warning, size: 13),
               const SizedBox(width: 6),
               Text(
                 titleText,
                 style: const TextStyle(
                   color: AppColors.warning,
-                  fontSize: 11,
+                  fontSize: 10,
                   fontWeight: FontWeight.bold,
-                  letterSpacing: 1.2,
+                  letterSpacing: 1.4,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 12),
           if (activeMode == _TelloMode.flip) _FlipButtons(provider: provider),
           if (activeMode == _TelloMode.follow) ...[
             _FollowStatusBadge(
               status: provider.followStatus,
               tofDistance: provider.tofDistance,
             ),
-            const SizedBox(height: 8),
-            _FlipBtn(
+            const SizedBox(height: 10),
+            _ActionBtn(
               icon: provider.isFollowMode
                   ? Icons.directions_run
                   : Icons.directions_walk,
               label: provider.isFollowMode ? 'STOP' : 'START',
               enabled: provider.isFlying,
+              color: AppColors.warning,
               onTap: () => context.read<DronProvider>().toggleFollowMode(),
             ),
           ],
@@ -423,7 +599,7 @@ class _ModePanel extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  BOTONES DE FLIP (cruz)
+// BOTONES DE FLIP
 // ─────────────────────────────────────────────
 class _FlipButtons extends StatelessWidget {
   final DronProvider provider;
@@ -432,40 +608,43 @@ class _FlipButtons extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool enabled = provider.isFlying;
-
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        _FlipBtn(
+        _ActionBtn(
           icon: Icons.arrow_upward,
           label: 'FWD',
           enabled: enabled,
+          color: AppColors.warning,
           onTap: () => context.read<DronProvider>().sendFlip('forward'),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: 6),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            _FlipBtn(
+            _ActionBtn(
               icon: Icons.arrow_back,
               label: 'LEFT',
               enabled: enabled,
+              color: AppColors.warning,
               onTap: () => context.read<DronProvider>().sendFlip('left'),
             ),
-            const SizedBox(width: 32),
-            _FlipBtn(
+            const SizedBox(width: 36),
+            _ActionBtn(
               icon: Icons.arrow_forward,
               label: 'RIGHT',
               enabled: enabled,
+              color: AppColors.warning,
               onTap: () => context.read<DronProvider>().sendFlip('right'),
             ),
           ],
         ),
-        const SizedBox(height: 4),
-        _FlipBtn(
+        const SizedBox(height: 6),
+        _ActionBtn(
           icon: Icons.arrow_downward,
           label: 'BACK',
           enabled: enabled,
+          color: AppColors.warning,
           onTap: () => context.read<DronProvider>().sendFlip('back'),
         ),
       ],
@@ -474,18 +653,11 @@ class _FlipButtons extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  BOTONES DE ORBIT (rodear objeto)
+// BOTONES DE ORBIT
 // ─────────────────────────────────────────────
-/// Panel de control para el modo órbita.
-///
-/// Permite al usuario elegir la dirección de rotación (CW / CCW),
-/// ajustar el radio de la órbita y arrancar/detener la maniobra.
-/// La lógica de vuelo real (sendOrbit, etc.) debe implementarse
-/// en DronProvider cuando se conecte con el SDK del Tello.
 class _OrbitButtons extends StatefulWidget {
   final DronProvider provider;
   const _OrbitButtons({required this.provider});
-
   @override
   State<_OrbitButtons> createState() => _OrbitButtonsState();
 }
@@ -498,37 +670,83 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
     final bool enabled = widget.provider.isFlying;
     final bool isRunning = widget.provider.isOrbitMode;
 
+    final orbitStatus = widget.provider.orbitStatus;
+    final orbitTof = widget.provider.orbitTofDistance;
+    final (orbitLabel, orbitColor) = switch (orbitStatus) {
+      'orbiting' => ('● ORBITING', const Color(0xFF00E676)),
+      'approach' => ('→ APPROACHING', const Color(0xFF29B6F6)),
+      'aligning' => ('⟳ ALIGNING', AppColors.warning),
+      'searching' => ('⟳ SEARCHING', AppColors.warning),
+      'lost' => ('✕ TARGET LOST', AppColors.danger),
+      'hover_safe' => ('⏸ HOVER SAFE', const Color(0xFF29B6F6)),
+      'activating' => ('◌ ACTIVATING', AppColors.textSecondary),
+      'off' => ('— OFF', AppColors.disabled),
+      _ => ('◌ WAITING', AppColors.textSecondary),
+    };
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // ── Fila: botones CW / STOP / CCW
+        // ── AÑADIR — badge ──
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: orbitColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: orbitColor.withValues(alpha: 0.7),
+              width: 1.2,
+            ),
+          ),
+          child: Text(
+            orbitLabel,
+            style: TextStyle(
+              color: orbitColor,
+              fontSize: 11,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 1.1,
+            ),
+          ),
+        ),
+        if (orbitTof > 0) ...[
+          const SizedBox(height: 4),
+          Text(
+            'ToF: ${orbitTof.toStringAsFixed(0)} cm',
+            style: TextStyle(
+              color: orbitColor.withValues(alpha: 0.9),
+              fontSize: 10,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+        const SizedBox(height: 10),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Órbita sentido antihorario
-            _FlipBtn(
+            _ActionBtn(
               icon: Icons.rotate_left,
               label: 'CCW',
               enabled: enabled && !isRunning,
+              color: AppColors.warning,
               onTap: () => context.read<DronProvider>().startOrbit(
                 radiusCm: _radiusCm.toInt(),
                 clockwise: false,
               ),
             ),
-            const SizedBox(width: 8),
-            // Detener órbita
-            _FlipBtn(
+            const SizedBox(width: 10),
+            _ActionBtn(
               icon: Icons.stop_circle_outlined,
               label: 'STOP',
               enabled: enabled && isRunning,
+              color: AppColors.warning,
               onTap: () => context.read<DronProvider>().stopOrbit(),
             ),
-            const SizedBox(width: 8),
-            // Órbita sentido horario
-            _FlipBtn(
+            const SizedBox(width: 10),
+            _ActionBtn(
               icon: Icons.rotate_right,
               label: 'CW',
               enabled: enabled && !isRunning,
+              color: AppColors.warning,
               onTap: () => context.read<DronProvider>().startOrbit(
                 radiusCm: _radiusCm.toInt(),
                 clockwise: true,
@@ -536,15 +754,14 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
             ),
           ],
         ),
-        const SizedBox(height: 10),
-        // ── Slider de radio
+        const SizedBox(height: 12),
         SizedBox(
           width: 220,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'RADIO: ${_radiusCm.toInt()} cm',
+                'RADIUS: ${_radiusCm.toInt()} cm',
                 style: const TextStyle(
                   color: AppColors.warning,
                   fontSize: 9,
@@ -567,9 +784,9 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
                   value: _radiusCm,
                   min: 30,
                   max: 200,
-                  divisions: 17, // pasos de 10 cm
+                  divisions: 17,
                   onChanged: isRunning
-                      ? null // no se puede cambiar mientras orbita
+                      ? null
                       : (v) => setState(() => _radiusCm = v),
                 ),
               ),
@@ -582,18 +799,20 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
 }
 
 // ─────────────────────────────────────────────
-//  BOTÓN GENÉRICO DE ACCIÓN (flip / orbit / follow)
+// BOTÓN DE ACCIÓN GENÉRICO
 // ─────────────────────────────────────────────
-class _FlipBtn extends StatelessWidget {
+class _ActionBtn extends StatelessWidget {
   final IconData icon;
   final String label;
   final bool enabled;
+  final Color color;
   final VoidCallback onTap;
 
-  const _FlipBtn({
+  const _ActionBtn({
     required this.icon,
     required this.label,
     required this.enabled,
+    required this.color,
     required this.onTap,
   });
 
@@ -602,35 +821,33 @@ class _FlipBtn extends StatelessWidget {
     return GestureDetector(
       onTap: enabled ? onTap : null,
       child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: 56,
-        height: 56,
+        duration: const Duration(milliseconds: 130),
+        width: 58,
+        height: 58,
         decoration: BoxDecoration(
           color: enabled
-              ? AppColors.warning.withValues(alpha: 0.2)
-              : Colors.white.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(12),
+              ? color.withValues(alpha: 0.15)
+              : Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(14),
           border: Border.all(
             color: enabled
-                ? AppColors.warning.withValues(alpha: 0.7)
-                : AppColors.disabled,
+                ? color.withValues(alpha: 0.65)
+                : Colors.white.withValues(alpha: 0.12),
             width: 1.5,
           ),
         ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              icon,
-              color: enabled ? AppColors.warning : AppColors.disabled,
-              size: 22,
-            ),
+            Icon(icon, color: enabled ? color : Colors.white24, size: 22),
+            const SizedBox(height: 2),
             Text(
               label,
               style: TextStyle(
-                color: enabled ? AppColors.warning : AppColors.disabled,
+                color: enabled ? color : Colors.white24,
                 fontSize: 9,
                 fontWeight: FontWeight.bold,
+                letterSpacing: 0.5,
               ),
             ),
           ],
@@ -641,7 +858,7 @@ class _FlipBtn extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  JOYSTICK TRANSPARENTE
+// JOYSTICK TRANSPARENTE
 // ─────────────────────────────────────────────
 class _TransparentJoystick extends StatelessWidget {
   final double size;
@@ -657,15 +874,13 @@ class _TransparentJoystick extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Opacity(
-      opacity: 0.45,
+      opacity: 0.55,
       child: SizedBox(
         width: size,
         height: size,
         child: Joystick(
           mode: JoystickMode.all,
-          listener: (details) {
-            onMove?.call(details.x, details.y);
-          },
+          listener: (details) => onMove?.call(details.x, details.y),
           onStickDragEnd: onRelease,
         ),
       ),
@@ -674,122 +889,8 @@ class _TransparentJoystick extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  HUD STAT WIDGET
+// CONFIRM SLIDER SHEET
 // ─────────────────────────────────────────────
-class _HudStat extends StatelessWidget {
-  final IconData icon;
-  final Color? iconColor;
-  final String label;
-  final String value;
-  final Color? valueColor;
-
-  const _HudStat({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.iconColor,
-    this.valueColor,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 5),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, color: iconColor ?? AppColors.primary, size: 10),
-              const SizedBox(width: 2),
-              Text(
-                label,
-                style: const TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 9,
-                ),
-              ),
-            ],
-          ),
-          Text(
-            value,
-            style: TextStyle(
-              color: valueColor ?? AppColors.textPrimary,
-              fontSize: 11,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────
-//  HUD BUTTON WIDGET
-// ─────────────────────────────────────────────
-class _HudButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final Color color;
-  final bool enabled;
-  final bool active;
-  final VoidCallback onTap;
-
-  const _HudButton({
-    required this.icon,
-    required this.label,
-    required this.color,
-    required this.enabled,
-    required this.onTap,
-    this.active = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: enabled ? onTap : null,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-        decoration: BoxDecoration(
-          color: active
-              ? color.withValues(alpha: 0.25)
-              : (enabled ? Colors.black54 : Colors.black26),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(
-            color: enabled ? color.withValues(alpha: 0.8) : AppColors.disabled,
-            width: active ? 1.5 : 1.0,
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: enabled ? color : AppColors.disabled, size: 18),
-            const SizedBox(height: 1),
-            Text(
-              label,
-              style: TextStyle(
-                color: enabled ? color : AppColors.disabled,
-                fontSize: 9,
-                fontWeight: FontWeight.bold,
-                letterSpacing: 0.5,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────
-//  CONFIRM SLIDER SHEET
-// ─────────────────────────────────────────────
-/// Bottom sheet con slider deslizable que el usuario debe arrastrar
-/// hasta el final para confirmar una acción crítica (TAKEOFF / LAND).
-/// Si se suelta antes del 95 %, el thumb vuelve al inicio automáticamente.
 class _ConfirmSliderSheet extends StatefulWidget {
   final String label;
   final Color color;
@@ -819,24 +920,18 @@ class _ConfirmSliderSheetState extends State<_ConfirmSliderSheet> {
         _confirmed = true;
         _value = 1.0;
       });
-      // Pequeño delay visual antes de ejecutar la acción
       Future.delayed(const Duration(milliseconds: 250), widget.onConfirmed);
     }
   }
 
   void _onChangeEnd(double v) {
-    // Si no se llegó al umbral, rebota al inicio
-    if (!_confirmed) {
-      setState(() => _value = 0.0);
-    }
+    if (!_confirmed) setState(() => _value = 0.0);
   }
 
   @override
   Widget build(BuildContext context) {
     final color = widget.color;
-    final displayLabel = _confirmed
-        ? 'CONFIRMED!'
-        : 'SLIDE TO  ${widget.label}';
+    final displayLabel = _confirmed ? 'CONFIRMED!' : 'SLIDE TO ${widget.label}';
 
     return Container(
       margin: const EdgeInsets.fromLTRB(16, 0, 16, 32),
@@ -849,7 +944,6 @@ class _ConfirmSliderSheetState extends State<_ConfirmSliderSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ── Cabecera
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
@@ -867,7 +961,6 @@ class _ConfirmSliderSheetState extends State<_ConfirmSliderSheet> {
             ],
           ),
           const SizedBox(height: 20),
-          // ── Slider
           SliderTheme(
             data: SliderTheme.of(context).copyWith(
               trackHeight: 10,
@@ -887,10 +980,9 @@ class _ConfirmSliderSheetState extends State<_ConfirmSliderSheet> {
             ),
           ),
           const SizedBox(height: 8),
-          // ── Hint
           if (!_confirmed)
             Text(
-              'Arrastra hasta el final para confirmar',
+              'Slide the knob to confirm',
               style: TextStyle(
                 color: color.withValues(alpha: 0.55),
                 fontSize: 10,
@@ -904,12 +996,11 @@ class _ConfirmSliderSheetState extends State<_ConfirmSliderSheet> {
 }
 
 // ─────────────────────────────────────────────
-//  VIDEO VIEW (igual que flight_screen)
+// VIDEO VIEW
 // ─────────────────────────────────────────────
 class _VideoView extends StatefulWidget {
   final MediaStream stream;
   const _VideoView({required this.stream});
-
   @override
   State<_VideoView> createState() => _VideoViewState();
 }
@@ -947,7 +1038,7 @@ class _VideoViewState extends State<_VideoView> {
 }
 
 // ─────────────────────────────────────────────
-//  SELECTOR DE MODOS (bottom sheet)
+// SELECTOR DE MODOS (bottom sheet)
 // ─────────────────────────────────────────────
 class _ModeSelectorSheet extends StatelessWidget {
   final _TelloMode activeMode;
@@ -968,7 +1059,7 @@ class _ModeSelectorSheet extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           const Text(
-            'SELECCIONA MODO',
+            'SELECT FLIGHT MODE',
             style: TextStyle(
               color: AppColors.warning,
               fontSize: 11,
@@ -1007,7 +1098,7 @@ class _ModeSelectorSheet extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────
-//  OPCIÓN DE MODO (tarjeta del selector)
+// OPCIÓN DE MODO
 // ─────────────────────────────────────────────
 class _ModeOption extends StatelessWidget {
   final IconData icon;
@@ -1062,6 +1153,9 @@ class _ModeOption extends StatelessWidget {
   }
 }
 
+// ─────────────────────────────────────────────
+// FOLLOW STATUS BADGE
+// ─────────────────────────────────────────────
 class _FollowStatusBadge extends StatelessWidget {
   final String status;
   final double tofDistance;
@@ -1074,7 +1168,7 @@ class _FollowStatusBadge extends StatelessWidget {
       'tof' => ('● FOLLOWING (ToF)', const Color(0xFF00E676)),
       'searching' => ('⟳ SEARCHING 360°', AppColors.warning),
       'grace' => ('… HOLDING', const Color(0xFF29B6F6)),
-      'lost' => ('x TARGET LOST', AppColors.danger),
+      'lost' => ('✕ TARGET LOST', AppColors.danger),
       'waiting' => ('◌ WAITING', AppColors.textSecondary),
       _ => ('— OFF', AppColors.disabled),
     };

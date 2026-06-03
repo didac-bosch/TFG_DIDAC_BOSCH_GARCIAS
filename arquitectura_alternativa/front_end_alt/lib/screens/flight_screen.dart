@@ -8,7 +8,7 @@ import '../provider.dart';
 import '../core/styles.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
-import '../core/fullscreen.dart';
+import '../core/js_bridges.dart';
 import 'dart:js_interop';
 
 @JS('eval')

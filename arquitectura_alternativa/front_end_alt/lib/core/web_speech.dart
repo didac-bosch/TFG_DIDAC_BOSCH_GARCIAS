@@ -2,8 +2,8 @@ import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 import 'package:web/web.dart' as web;
 
-//Acceso a API nativa del navegador (SpeechRecognition)
 
+//Acceso a API nativa del navegador (SpeechRecognition)
 
 extension type SpeechRecognitionJS._(JSObject _) implements JSObject {    //conversión a tipo extension para poder tratar objetos JavaScript
   external set continuous(bool value);  

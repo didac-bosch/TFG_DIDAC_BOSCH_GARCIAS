@@ -6,7 +6,7 @@ import '../core/styles.dart';
 import 'flight_screen.dart';
 import 'voice_flight_screen.dart';
 import 'imu_flight_screen.dart';
-import '../core/fullscreen.dart';
+import '../core/js_bridges.dart';
 import 'flight_log_screen.dart';
 import 'flight_plan_screen.dart';
 import 'tello_flight_screen.dart';

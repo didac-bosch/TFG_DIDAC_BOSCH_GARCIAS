@@ -7,7 +7,7 @@ import 'package:provider/provider.dart';
 import 'package:web/web.dart' as web;
 import '../provider.dart';
 import '../core/styles.dart';
-import '../core/fullscreen.dart';
+import '../core/js_bridges.dart';
 import 'flight_plan_screen.dart';
 
 // Pantalla de historial de vuelos.

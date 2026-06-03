@@ -9,7 +9,7 @@ import 'package:provider/provider.dart';
 import '../provider.dart';
 import '../core/styles.dart';
 import '../core/web_speech.dart';
-import '../core/fullscreen.dart';
+import '../core/js_bridges.dart';
 
 // Estado del botón PTT (push-to-talk):
 // idle - esperando pulsación, listening - micrófono activo.
@@ -24,6 +24,7 @@ class VoiceFlightScreen extends StatefulWidget {
   State<VoiceFlightScreen> createState() => _VoiceFlightScreenState();
 }
 
+// Pantalla principal de vuelo con control por voz. Usa Web Speech API para reconocimiento
 class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
   final WebSpeech _speech = WebSpeech();
   bool _isAvailable = false;
@@ -138,7 +139,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
     _identifyAndExecute(text);
   }
 
-  /// Comprueba si el texto contiene al menos una palabra clave válida.
+  // Comprueba si el texto contiene al menos una palabra clave válida.
   bool _hasValidCommand(String text) {
     return text.contains('armar') ||
         text.contains('despegar') ||

@@ -18,11 +18,13 @@ class MqttLogic {
     }
     _subscribedTopics.clear();
 
+    // Generar un clientId único para evitar conflictos en el broker
     final clientId = 'flutterAlt${Random().nextInt(9000)}';
     _client = MqttBrowserClient(
       'wss://broker.hivemq.com/mqtt',
       clientId,
     );
+    // Configuraciones para conexiones WebSocket seguras
     _client.port = 8884;
     _client.keepAlivePeriod = 20;
     _client.connectTimeoutPeriod = 10000;
@@ -37,6 +39,7 @@ class MqttLogic {
     await _client.connect();
     _clientInitialized = true;
 
+    // Escuchar mensajes entrantes y procesarlos con el callback registrado
     _client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> messages) {
       for (final msg in messages) {
         final payload = MqttPublishPayload.bytesToStringAsString(
@@ -62,17 +65,19 @@ class MqttLogic {
     _subscribedTopics.clear();
   }
 
+  // Publica un mensaje en un topic específico.
   void publish(String topic, String payload) {
     final builder = MqttClientPayloadBuilder();
     builder.addString(payload);
     _client.publishMessage(topic, MqttQos.atLeastOnce, builder.payload!);
   }
 
+  // Desconecta el cliente MQTT limpiamente, cancelando suscripciones y cerrando la conexión.
   void disconnect() {
     unsubscribeAll();
     _client.disconnect();
     _clientInitialized = false;
   }
-
+  
   void _onDisconnected() {}
 }

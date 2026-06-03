@@ -344,6 +344,9 @@ class DronProvider extends ChangeNotifier {
   String followStatus = 'off';
   double tofDistance = -1.0;
 
+  String orbitStatus = 'off';
+  double orbitTofDistance = -1.0;
+
   // metodos
 
   void switchCamera() {
@@ -442,6 +445,7 @@ class DronProvider extends ChangeNotifier {
   }
 
   void updateJoystick({double? lx, double? ly, double? rx, double? ry}) {
+    if (isFollowMode || isOrbitMode) return;
     if (lx != null) _lx = lx;
     if (ly != null) _ly = ly;
     if (rx != null) _rx = rx;
@@ -738,7 +742,6 @@ class DronProvider extends ChangeNotifier {
     } catch (_) {}
     await Future.delayed(const Duration(milliseconds: 300));
 
-
     // Limpiar estado LOCAL ahora, sin esperar confirmación de la ET
     _mqtt.disconnect();
     stopUserLocation();
@@ -826,7 +829,7 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Modo detección YOLO
+  // -----------------------MODO DETECCIÓN----------------------------------
   void setDetectionMode(DetectionMode mode) {
     detectionMode = mode;
     final modeStr = switch (mode) {
@@ -838,6 +841,7 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // -----------------------CAPTURA DE FOTO----------------------------------
   void capturePhoto() {
     final ts = DateTime.now().millisecondsSinceEpoch;
     _jsCapture('drone_capture_$ts.png');
@@ -845,6 +849,7 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // -----------------------GRABACIÓN DE VÍDEO----------------------------------
   void startRecording() {
     if (isRecording) return;
     _jsStartRecording();
@@ -853,28 +858,31 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // -----------------------PARAR GRABACIÓN DE VÍDEO----------------------------------
   void stopRecording() {
     if (!isRecording) return;
     final ts = DateTime.now().millisecondsSinceEpoch;
-    _jsStopRecording('drone_video_$ts.webm');
+    _jsStopRecording('dronevideo$ts.mp4');
     isRecording = false;
     message = '!Video saved!';
     notifyListeners();
   }
 
-  // Métodos tello
+
   DateTime? _lastFlipTime;
+  // -----------------------FLIP----------------------------------
   void sendFlip(String dir) {
     if (!isConnected || !isFlying) return;
     final now = DateTime.now();
     if (_lastFlipTime != null &&
-        now.difference(_lastFlipTime!) < const Duration(seconds: 3)) {
+        now.difference(_lastFlipTime!) < const Duration(seconds: 2)) {
       return;
     }
     _lastFlipTime = now;
     _mqtt.publish(Constants.topicFlip, dir);
   }
 
+  // -----------------------MODO ORBIT----------------------------------
   void startOrbit({required int radiusCm, required bool clockwise}) {
     if (!isConnected || !isFlying || isOrbitMode) return;
     isOrbitMode = true;
@@ -884,6 +892,7 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // -----------------------PARAR MODO ORBIT----------------------------------
   void stopOrbit() {
     if (!isConnected || !isOrbitMode) return;
     isOrbitMode = false;
@@ -892,10 +901,15 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // -----------------------MODO FOLLOW----------------------------------
   void toggleFollowMode() {
-    if (!isConnected || !isFlying) return;
+    if (!isConnected || !isFlying ) return;
     isFollowMode = !isFollowMode;
     if (isFollowMode) {
+      _lx = 0.0;
+      _ly = 0.0;
+      _rx = 0.0;
+      _ry = 0.0;
       _stopJoystickTimer();
     } else {
       _startJoystickTimer();
@@ -910,7 +924,10 @@ class DronProvider extends ChangeNotifier {
   //}
 
   // -----------------------HANDLER DE MENSAJES----------------------------------
+
   void _handleMessage(String topic, String payload) {
+
+    // --------------- TOPIC CONNECTED ---------------
     if (topic == Constants.topicConnected) {
       if (!_waitingForConnect) return; // descarta retained/stale messages
       _connectionTimeoutTimer?.cancel(); // ← añadir
@@ -923,6 +940,7 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC ARMED ---------------
     if (topic == Constants.topicArmed) {
       if (!_waitingForArm && !isMissionMode) return;
       _armConfirmed = true;
@@ -933,6 +951,8 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+
+    // --------------- TOPIC DISARMED ---------------
     if (topic == Constants.topicDisarmed) {
       isArmed = false;
       isFlying = false;
@@ -945,6 +965,7 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC FLYING ---------------
     if (topic == Constants.topicFlying) {
       isFlying = true;
       isMissionMode = missionUploaded;
@@ -956,6 +977,7 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC LANDED ---------------
     if (topic == Constants.topicLanded) {
       _endSession(completed: true);
       isFlying = false;
@@ -972,6 +994,7 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC MISSION UPLOADED ---------------
     if (topic == Constants.topicMissionUploaded) {
       missionUploaded = payload == 'ok';
       message = missionUploaded
@@ -981,6 +1004,7 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC MISSION STARTED ---------------
     if (topic == Constants.topicMissionStarted) {
       if (payload == 'ok') {
         isMissionMode = true;
@@ -995,12 +1019,14 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC MISSION WAYPOINT ---------------
     if (topic == Constants.topicMissionWaypoint) {
       activeMissionWaypoint = int.tryParse(payload) ?? 0;
       notifyListeners();
       return;
     }
 
+    // --------------- TOPIC DISCONNECTED ---------------
     if (topic == Constants.topicDisconnected) {
       _endSession(completed: false);
       isConnected = false;
@@ -1089,9 +1115,14 @@ class DronProvider extends ChangeNotifier {
         );
       }
       followStatus = (status['followStatus'] as String?) ?? 'off';
-      const double maxValidTofCm = 300.0;
+      orbitStatus = (status['orbitStatus'] as String?) ?? 'off';
+      final rawOrbitTof =
+          (status['orbitTofDistance'] as num?)?.toDouble() ?? -1.0;
+      orbitTofDistance = (rawOrbitTof > 0 && rawOrbitTof < 3000.0)
+          ? rawOrbitTof
+          : -1.0;
       final rawTof = (status['tofDistance'] as num?)?.toDouble() ?? -1.0;
-      tofDistance = (rawTof > 0 && rawTof <= maxValidTofCm) ? rawTof : -1.0;
+      tofDistance = (rawTof > 0 && rawTof < 3000.0) ? rawTof : -1.0;
       notifyListeners();
     } catch (e) {
       debugPrint('[TELEMETRY] Parse error: $e');

@@ -1,3 +1,5 @@
+
+// Constantes globales para la aplicación, como la configuración del broker MQTT, los topics de publicación y suscripción, y la URL de señalización WebRTC.
 class Constants {
   static const String broker = 'broker.hivemq.com'; //cambiar a broker UPC???
   static const int port = 8884;
@@ -5,7 +7,8 @@ class Constants {
   // URL de señalización WebRTC (para hacer el handshake con la estación tierra)
   static const String webrtcSignalUrl = 'wss://dronseetac.upc.edu:8105/ws';
 
-  // Topics publicar
+  // ---------------Topics publicar------------------------
+  // Comandos de control
   static const String topicConnect = 'mobileFlutter/groundStation/connect';
   static const String topicArm = 'mobileFlutter/groundStation/arm';
   static const String topicTakeoff = 'mobileFlutter/groundStation/takeoff';
@@ -28,7 +31,9 @@ class Constants {
   // Control de vuelo
   static const String topicSetMode = 'mobileFlutter/groundStation/setMode';
 
-  // Topics escuchar
+
+  // ---------------Topics escuchar------------------------
+  // Confirmaciones de estado
   static const String topicConnected = 'groundStation/mobileFlutter/connected';
   static const String topicArmed = 'groundStation/mobileFlutter/armed';
   static const String topicDisarmed = 'groundStation/mobileFlutter/disarmed';

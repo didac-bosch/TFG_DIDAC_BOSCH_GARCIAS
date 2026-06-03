@@ -74,11 +74,21 @@
         return;
       }
 
-      const mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9')
-        ? 'video/webm;codecs=vp9'
-        : 'video/webm';
+      // iOS Safari graba MP4 nativo, Chrome graba WebM
+      let mimeType = '';
+      if (MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
+        mimeType = 'video/mp4;codecs=avc1';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+        mimeType = 'video/webm;codecs=vp9';
+      } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+        mimeType = 'video/webm;codecs=vp8';
+      } else {
+        mimeType = 'video/webm';
+      }
 
+      window._droneRecordingMimeType = mimeType;
       _droneChunks = [];
+
       try {
         _droneRecorder = new MediaRecorder(stream, { mimeType });
         _droneRecorder.ondataavailable = e => {
@@ -94,13 +104,16 @@
     window.stopDroneRecording = function (filename) {
       if (!_droneRecorder) { console.warn('stopDroneRecording: no hay grabación activa'); return; }
       _droneRecorder.onstop = () => {
-        const blob = new Blob(_droneChunks, { type: 'video/webm' });
+        const mime = window._droneRecordingMimeType || 'video/webm';
+        const isNativeMp4 = mime.includes('mp4');
+        const blob = new Blob(_droneChunks, { type: mime });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = filename;
+        // iOS: descarga como .mp4 real — Chrome: descarga como .webm
+        a.download = isNativeMp4 ? filename : filename.replace('.mp4', '.webm');
         a.click();
-        URL.revokeObjectURL(url);
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
       };
       _droneRecorder.stop();
     };
@@ -108,7 +121,6 @@
 
     // ------------------ Fullscreen -------------
     window.requestFullscreenEZ = function () {
-      // Excluir iPhone (iOS Safari no soporta fullscreen API)
       if (/iPhone|iPad/i.test(navigator.userAgent)) return;
       const el = document.documentElement;
       const fn = el.requestFullscreen
@@ -123,7 +135,7 @@
         || document.webkitFullscreenElement
         || document.mozFullScreenElement
         || document.msFullscreenElement;
-      if (!el) return; // ya no está en fullscreen, no hacer nada
+      if (!el) return;
       const fn = document.exitFullscreen
         || document.webkitExitFullscreen
         || document.mozCancelFullScreen
@@ -132,7 +144,6 @@
     };
 
     // --------- Orientation lock helper ------------------
-    // orientation: 'portrait', 'landscape',
     window.lockOrientationEZ = function (orientation) {
       if (screen.orientation && typeof screen.orientation.lock === 'function') {
         screen.orientation.lock(orientation).catch(function () { });

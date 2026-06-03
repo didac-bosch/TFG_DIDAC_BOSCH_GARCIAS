@@ -3,21 +3,25 @@ import 'dart:convert';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
-const String _myId = 'browser'; //IDs para el handshake webrtc
+// IDs para el handshake de signaling, el browser se identifica como 'browser' y la ET como 'python'
+const String _myId = 'browser';
 const String _remoteId = 'python';
 
+// Esta clase maneja toda la lógica de WebRTC: conexión, señalización, canales de datos y transmisión de video.
 class WebRTCLogic {
   RTCPeerConnection? _pc;
   WebSocketChannel? _ws;
   RTCDataChannel? _joystickChannel;
   RTCDataChannel? _telemetryChannel;
-
   Function(MediaStream)? onRemoteStream;
   Function(String)? onTelemetry;
 
+  // Cola para mensajes que llegan antes de que la PeerConnection esté lista
+  // Esto es necesario porque el servidor puede enviar mensajes (como candidates) antes de que hayamos recibido la configuración ICE y creado la PeerConnection.
   final List<Map<String, dynamic>> _msgQueue = [];
   bool _pcReady = false;
 
+// Conecta al servidor de signaling y establece la PeerConnection
   Future<void> connect(String signalingUrl) async {
     _ws = WebSocketChannel.connect(Uri.parse(signalingUrl));
     _ws!.sink.add(_myId);
@@ -62,6 +66,8 @@ class WebRTCLogic {
     _msgQueue.clear();
   }
 
+
+  // Configura la PeerConnection con los ICE servers y los handlers para tracks, data channels e ICE candidates
   Future<void> _setupPC(Map<String, dynamic> config) async {
     _pc = await createPeerConnection(config);
 
@@ -133,6 +139,7 @@ class WebRTCLogic {
     }
   }
 
+  // Envía los valores del joystick a la ET a través del DataChannel
   void sendJoystick(double lx, double ly, double rx, double ry) {
     //Se convierten los 4 ejes como JSON y se envían por el DataChannel
     if (_joystickChannel == null) return;
@@ -146,6 +153,7 @@ class WebRTCLogic {
     );
   }
 
+  // Cierra la conexión WebRTC y el WebSocket, y limpia los canales de datos
   Future<void> disconnect() async {
     _pcReady = false;
     _msgQueue.clear();

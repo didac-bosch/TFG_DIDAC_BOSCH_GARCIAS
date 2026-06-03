@@ -10,7 +10,7 @@ import 'package:provider/provider.dart';
 
 import '../provider.dart';
 import '../core/styles.dart';
-import '../core/fullscreen.dart';
+import '../core/js_bridges.dart';
 
 // JS bridge — funciones expuestas desde index.html
 @JS()
@@ -38,6 +38,7 @@ class ImuFlightScreen extends StatefulWidget {
   State<ImuFlightScreen> createState() => _ImuFlightScreenState();
 }
 
+// Pantalla de vuelo con control por IMU y mapa integrado.
 class _ImuFlightScreenState extends State<ImuFlightScreen> {
   bool _imuActive = false;
   _ImuMode _mode = _ImuMode.normal;
@@ -226,7 +227,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
-  // Widger botón altitud reutilizable
+  // Widget botón altitud reutilizable
   Widget _buildAltButton({
     required bool up,
     required bool isFlying,
@@ -240,7 +241,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
         if (!isFlying) return;
         setState(
           () => _lyButton = up ? 1.0 : -1.0,
-        ); // ← setState, no updateJoystick
+        ); 
       },
       onLongPressEnd: (_) {
         setState(() => _lyButton = 0.0);
@@ -277,8 +278,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
-  // Flecha de velocidad creciente (solo portrait)
-  // El icono crece y rota según la velocidad y dirección del dron.
+  // Flecha de velocidad creciente según magnitud y orientada según dirección de movimiento 
   Widget _buildVelocityArrow(double vx, double vy) {
     final speed = sqrt(vx * vx + vy * vy);
     final angle = atan2(vy, vx);
@@ -288,6 +288,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     final double arrowSz = (maxSize * norm).clamp(0.0, maxSize);
     const green = Color.fromARGB(255, 0, 255, 132);
 
+    // El widget se vuelve más opaco y con borde verde al moverse, y más pequeño cuanto más lento va.
     return AnimatedOpacity(
       duration: const Duration(milliseconds: 300),
       opacity: moving ? 1.0 : 0.5,
@@ -353,7 +354,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
-  // Panel IMU
+  // Panel IMU 
   Widget _buildLandscapeImuPanel() {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
@@ -441,7 +442,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                 border: Border.all(color: Colors.deepPurple),
               ),
               child: Text(
-                _mode == _ImuMode.normal ? '📱 NRM' : '🕹️ VOL',
+                _mode == _ImuMode.normal ? 'NORMAL' : 'WHEEL',
                 style: const TextStyle(
                   color: Colors.deepPurple,
                   fontSize: 9,
@@ -455,6 +456,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
+  // Construcción de la pantalla completa con mapa, telemetría y panel IMU.
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
@@ -658,7 +660,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                   ),
                                 ],
                               ),
-                            // Sombra gris en la posición del dron
+                            // Sombra gris en la posición del dron (cuando está volando)
                             if (provider.isFlying)
                               CircleLayer(
                                 circles: [
