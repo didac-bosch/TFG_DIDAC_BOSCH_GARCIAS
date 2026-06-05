@@ -21,7 +21,7 @@ class SetupScreen extends StatelessWidget {
     // Mostrar error de conexión si se ha producido
     if (provider.connectionErrorMode != null) {
       final mode = provider.connectionErrorMode!;
-      provider.clearConnectionError(); 
+      provider.clearConnectionError();
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!context.mounted) return; // guard de safety
         showDialog(
@@ -820,7 +820,10 @@ class _StartFlightButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final bool enabled =
-        !provider.isLoading && provider.isConnected && provider.isConfigValid && !provider.isFlying;
+        !provider.isLoading &&
+        provider.isConnected &&
+        provider.isConfigValid &&
+        !provider.isFlying;
 
     final Color modeColor = switch (provider.selectedMode) {
       ControlMode.classic => AppColors.primary,
@@ -998,11 +1001,19 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.videocam,
-                  'Camera on: 📷 capture or ⏺ record video',
+                  'Camera on: 📷 capture photo · ⏺ record video · 🔄 switch camera',
+                ),
+                _HelpItem(
+                  Icons.zoom_in,
+                  'Zoom bar (×1–×5) — available in camera view only',
+                ),
+                _HelpItem(
+                  Icons.search,
+                  'YOLO detection — All objects / Persons only / Off (camera view)',
                 ),
                 _HelpItem(
                   Icons.check_circle,
-                  'Flow: ARM → TAKEOFF → fly → LAND or RTL',
+                  'Flow: CONNECT → ARM → TAKEOFF → fly → LAND or RTL → DISCONNECT',
                 ),
               ],
             ),
@@ -1032,6 +1043,7 @@ void _showHelpSheet(BuildContext context) {
                   Icons.warning_amber,
                   'Dead zone ±5–15° (fwd) / ±10° (lateral) ignored',
                 ),
+                _HelpItem(Icons.info_outline, 'Not available for Tello'),
               ],
             ),
             const SizedBox(height: 16),
@@ -1042,7 +1054,7 @@ void _showHelpSheet(BuildContext context) {
               items: const [
                 _HelpItem(
                   Icons.touch_app,
-                  'First tap 🎤 — grants microphone permission',
+                  'First tap 🎤 — grants microphone permission in the browser',
                 ),
                 _HelpItem(Icons.mic, 'Hold 🎤 → speak → release → executes'),
                 _HelpItem(
@@ -1057,6 +1069,7 @@ void _showHelpSheet(BuildContext context) {
                   Icons.record_voice_over,
                   'subir · bajar · volver a despegue (RTL)',
                 ),
+                _HelpItem(Icons.info_outline, 'Not available for Tello'),
               ],
             ),
             const SizedBox(height: 16),
@@ -1067,7 +1080,7 @@ void _showHelpSheet(BuildContext context) {
               items: [
                 _HelpItem(
                   Icons.wifi,
-                  'Connect phone to Tello Wi-Fi before launching the app',
+                  'Connect your device to the Tello Wi-Fi before launching the app',
                 ),
                 _HelpItem(
                   Icons.sports_esports,
@@ -1075,7 +1088,7 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.flight_takeoff,
-                  'TAKEOFF — arms and takes off automatically (~50 cm)',
+                  'TAKEOFF — takes off automatically (~50 cm), no ARM step required',
                 ),
                 _HelpItem(
                   Icons.flight_land,
@@ -1083,23 +1096,91 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.tune,
-                  'MODES — opens Flip / Dance / Follow overlay panel',
+                  'MODES — opens the Flip, Follow and Orbit panel',
                 ),
                 _HelpItem(
                   Icons.flip_camera_android,
                   'Flip: tap a direction arrow while flying to execute the flip',
                 ),
                 _HelpItem(
-                  Icons.music_note,
-                  'Dance: sends a preset choreography sequence',
-                ),
-                _HelpItem(
                   Icons.directions_run,
                   'Follow: activates person-tracking mode (tap STOP to deactivate)',
                 ),
                 _HelpItem(
+                  Icons.rotate_right,
+                  'Orbit: orbits around a person — adjust radius with slider (30–200 cm)',
+                ),
+                _HelpItem(
                   Icons.warning_amber,
                   'Voice and IMU modes are not available for Tello',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const _HelpSection(
+              icon: Icons.edit_location_alt_outlined,
+              title: 'Flight Planner',
+              color: AppColors.primary,
+              items: [
+                _HelpItem(
+                  Icons.map,
+                  'Tap the map to add waypoints — numbered in insertion order',
+                ),
+                _HelpItem(
+                  Icons.touch_app,
+                  'Tap a waypoint on the map or list to edit its altitude and action',
+                ),
+                _HelpItem(
+                  Icons.drag_handle,
+                  'Drag the ≡ handle in the list to reorder waypoints',
+                ),
+                _HelpItem(
+                  Icons.bolt,
+                  'Actions per waypoint: None · Hover · Photo · Record · RTL · Land',
+                ),
+                _HelpItem(
+                  Icons.save_outlined,
+                  'Save plan locally with 💾 — persists across sessions',
+                ),
+                _HelpItem(
+                  Icons.upload,
+                  'UPLOAD — sends the mission to the drone (active connection required)',
+                ),
+                _HelpItem(
+                  Icons.play_arrow,
+                  'START — begins autonomous mission once uploaded to the drone',
+                ),
+                _HelpItem(
+                  Icons.download_outlined,
+                  'Download plan as a .waypoints file compatible with Mission Planner',
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            const _HelpSection(
+              icon: Icons.history,
+              title: 'Flight Log',
+              color: AppColors.primary,
+              items: [
+                _HelpItem(
+                  Icons.auto_graph,
+                  'Every completed or interrupted flight is recorded automatically',
+                ),
+                _HelpItem(
+                  Icons.map_outlined,
+                  'Tap a session to view its trail on an interactive map with a playback slider',
+                ),
+                _HelpItem(
+                  Icons.speed,
+                  'Stats: duration · distance · max altitude · altitude gain · max speed · min battery',
+                ),
+                _HelpItem(
+                  Icons.download,
+                  'Download telemetry data as a CSV file',
+                ),
+                _HelpItem(
+                  Icons.delete_sweep,
+                  'Delete sessions individually or clear all at once',
                 ),
               ],
             ),
