@@ -10,6 +10,7 @@ class MqttLogic {
   final List<String> _subscribedTopics = [];
 
   Function(String topic, String payload)? onMessageReceived;
+  Function()? onDisconnected;
 
   Future<void> connect() async {
     // Cerrar cliente anterior limpiamente antes de crear uno nuevo
@@ -79,5 +80,7 @@ class MqttLogic {
     _clientInitialized = false;
   }
   
-  void _onDisconnected() {}
+  void _onDisconnected() {
+    onDisconnected?.call();
+  }
 }

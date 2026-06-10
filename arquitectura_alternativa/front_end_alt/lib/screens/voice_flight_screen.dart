@@ -10,6 +10,7 @@ import '../provider.dart';
 import '../core/styles.dart';
 import '../core/web_speech.dart';
 import '../core/js_bridges.dart';
+import '../core/telemetry_widgets.dart';
 
 // Estado del botón PTT (push-to-talk):
 // idle - esperando pulsación, listening - micrófono activo.
@@ -197,10 +198,10 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
       _startContinuousMove(rx: -1.0);
     } else if (text.contains('subir')) {
       _setCommand('SUBIR', Icons.keyboard_double_arrow_up, Colors.lightGreen);
-      _startContinuousMove(ly: 1.0);
+      _startContinuousMove(ly: 0.35);
     } else if (text.contains('bajar')) {
       _setCommand('BAJAR', Icons.keyboard_double_arrow_down, Colors.amber);
-      _startContinuousMove(ly: -1.0);
+      _startContinuousMove(ly: -0.35);
     } else if (text.contains('para') || text.contains('stop')) {
       _setCommand('PARAR', Icons.stop_circle, AppColors.danger);
       _stopMove();
@@ -225,53 +226,14 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
     }
   }
 
-  // Colores batería
-  Color _getBatteryColor(double bat) {
-    if (bat > 50) return AppColors.primary;
-    if (bat > 20) return AppColors.warning;
-    return AppColors.danger;
-  }
-
-  // Widget reutilizable para cada celda de la barra de telemetría.
-  Widget _buildTelemetryItem(IconData icon, String label, String value) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: AppColors.primary, size: 11),
-            const SizedBox(width: 2),
-            Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 9,
-              ),
-            ),
-          ],
-        ),
-        Text(
-          value,
-          style: const TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
-
   // Calcula el punto final del vector de velocidad para dibujarlo en el mapa.
   LatLng _calcVelocityEndPoint(double lat, double lon, double vx, double vy) {
     final speed = sqrt(vx * vx + vy * vy);
-    if (speed < 0.3) return LatLng(lat, lon);
+    if (speed < 0.5) return LatLng(lat, lon);
     const scale = 6.0;
     final dlat = vx * scale / 111320;
     final dlon = vy * scale / (111320 * cos(lat * pi / 180));
-    return LatLng(lat + dlat, lon + dlon);
+    return LatLng((lat + dlat/50), (lon + dlon/50));
   }
 
   // Recentra el mapa sobre el dron
@@ -291,7 +253,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
 
     final bool isListening = _listenState == _ListenState.listening;
     final bool hasCommand =
-        _lastCommand.isNotEmpty && _lastCommand != 'Comando no reconocido';
+        _lastCommand.isNotEmpty && _lastCommand != 'Command not recognised';
 
     //Posición inicial del mapa: dron si tiene GPS, campus EETAC si no
     final double droneLat = provider.currentLat != 0.0
@@ -311,95 +273,10 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // --------- BARRA SUPERIOR DE TELEMTRIA -------------------
-            Container(
-              color: AppColors.surface,
-              padding: EdgeInsets.symmetric(
-                horizontal: screenW * 0.015,
-                vertical: screenH * 0.006,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildTelemetryItem(
-                    Icons.height,
-                    'ALT',
-                    '${provider.currentAlt.toStringAsFixed(1)}m',
-                  ),
-                  _buildTelemetryItem(
-                    Icons.speed,
-                    'GS',
-                    '${provider.currentSpeed.toStringAsFixed(1)}m/s',
-                  ),
-                  _buildTelemetryItem(
-                    Icons.explore,
-                    'HDG',
-                    '${provider.currentHeading.toInt()}°',
-                  ),
-                  _buildTelemetryItem(
-                    Icons.location_on,
-                    'LAT',
-                    provider.currentLat.toStringAsFixed(5),
-                  ),
-                  _buildTelemetryItem(
-                    Icons.location_searching,
-                    'LON',
-                    provider.currentLon.toStringAsFixed(5),
-                  ),
-                  _buildTelemetryItem(
-                    Icons.info_outline,
-                    'STATE',
-                    provider.currentState,
-                  ),
-                  _buildTelemetryItem(
-                    Icons.airplanemode_active,
-                    'MODE',
-                    provider.currentMode,
-                  ),
-                  // Batería con color semáforo
-                  provider.isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: AppColors.primary,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.battery_full,
-                                  color: _getBatteryColor(provider.currentBat),
-                                  size: 11,
-                                ),
-                                const SizedBox(width: 2),
-                                const Text(
-                                  'BAT',
-                                  style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              '${provider.currentBat.toInt()}%',
-                              style: TextStyle(
-                                color: _getBatteryColor(provider.currentBat),
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                ],
-              ),
-            ),
+            // --------- BARRA SUPERIOR: CHIPS DE ESTADO + BATERÍA + MENSAJE ---
+            StatusBanner(provider: provider),
+            // --------- BARRA DE TELEMETRÍA ----------------------------------
+            CompactTelemetryRow(provider: provider),
 
             // ---------- ZONA CENTRAL ---------------------------
             Expanded(
@@ -551,35 +428,6 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                     ),
                   ),
 
-                  // ----------- Mensaje de estado del provider
-                  Positioned(
-                    top: screenH * 0.02,
-                    left: screenW * 0.22,
-                    right: screenW * 0.18,
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 4,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.black54,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: AppColors.disabled),
-                      ),
-                      child: Text(
-                        provider.message,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ),
-                  ),
-
                   // ----------- Botón DISCONNECT
                   // Deshabilitado si el dron está armado o volando
                   Positioned(
@@ -597,30 +445,53 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                               exitFullscreenEZ();
                               Navigator.pop(context);
                             },
-                      child: Container(
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
                         padding: const EdgeInsets.symmetric(
                           horizontal: 10,
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color:
-                              provider.isLoading ||
+                          color: (provider.isLoading ||
                                   !provider.isConnected ||
                                   provider.isArmed ||
-                                  provider.isFlying
-                              ? AppColors.disabled
-                              : AppColors.danger,
-                          borderRadius: BorderRadius.circular(8),
+                                  provider.isFlying)
+                              ? Colors.transparent
+                              : AppColors.danger.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: (provider.isLoading ||
+                                    !provider.isConnected ||
+                                    provider.isArmed ||
+                                    provider.isFlying)
+                                ? AppColors.disabled
+                                : AppColors.danger,
+                            width: 1.5,
+                          ),
                         ),
-                        child: const Row(
+                        child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            Icon(Icons.link_off, color: Colors.white, size: 14),
-                            SizedBox(width: 4),
+                            Icon(
+                              Icons.link_off,
+                              size: 14,
+                              color: (provider.isLoading ||
+                                      !provider.isConnected ||
+                                      provider.isArmed ||
+                                      provider.isFlying)
+                                  ? AppColors.textSecondary
+                                  : AppColors.danger,
+                            ),
+                            const SizedBox(width: 4),
                             Text(
                               'DISC',
                               style: TextStyle(
-                                color: Colors.white,
+                                color: (provider.isLoading ||
+                                        !provider.isConnected ||
+                                        provider.isArmed ||
+                                        provider.isFlying)
+                                    ? AppColors.textSecondary
+                                    : AppColors.danger,
                                 fontSize: 11,
                                 fontWeight: FontWeight.bold,
                               ),
@@ -639,72 +510,16 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        // Panel de último comando reconocido
+                        // Panel de estado de reconocimiento (idle / listening / detected)
                         Expanded(
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 300),
-                            curve: Curves.easeInOut,
-                            padding: const EdgeInsets.symmetric(
-                              vertical: 12,
-                              horizontal: 14,
-                            ),
-                            decoration: BoxDecoration(
-                              color: AppColors.surface,
-                              border: Border.all(
-                                color: hasCommand
-                                    ? _lastColor
-                                    : AppColors.disabled,
-                                width: hasCommand ? 2.0 : 1.0,
-                              ),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Row(
-                                  children: [
-                                    Icon(
-                                      _lastIcon,
-                                      color: hasCommand
-                                          ? _lastColor
-                                          : AppColors.textSecondary,
-                                      size: 18,
-                                    ),
-                                    const SizedBox(width: 8),
-                                    Expanded(
-                                      child: Text(
-                                        _lastCommand.isEmpty
-                                            ? _permissionGranted
-                                                  ? 'Keep pressed 🎤 and say a command'
-                                                  : 'Press 🎤 to activate microphone'
-                                            : _lastCommand,
-                                        style: TextStyle(
-                                          color: hasCommand
-                                              ? _lastColor
-                                              : AppColors.textSecondary,
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.bold,
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                                // Texto parcial en tiempo real mientras escucha
-                                if (isListening && _rawText.isNotEmpty) ...[
-                                  const SizedBox(height: 5),
-                                  Text(
-                                    _rawText,
-                                    style: const TextStyle(
-                                      color: AppColors.textSecondary,
-                                      fontSize: 11,
-                                    ),
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ],
-                              ],
-                            ),
+                          child: _VoiceStatePanel(
+                            isListening: isListening,
+                            permissionGranted: _permissionGranted,
+                            hasCommand: hasCommand,
+                            rawText: _rawText,
+                            lastCommand: _lastCommand,
+                            lastIcon: _lastIcon,
+                            lastColor: _lastColor,
                           ),
                         ),
                         SizedBox(width: screenW * 0.03),
@@ -713,44 +528,67 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                         // Tap simple  - activa permiso de micrófono (primera vez)
                         // Long press  - graba mientras se mantiene pulsado
                         // Color: gris=sin permiso, verde=listo, rojo=escuchando
-                        GestureDetector(
-                          onTap: _permissionGranted ? null : _onMicTap,
-                          onLongPressStart: _permissionGranted
-                              ? (_) => _onMicPressStart()
-                              : null,
-                          onLongPressEnd: _permissionGranted
-                              ? (_) => _onMicPressEnd()
-                              : null,
-                          child: AnimatedContainer(
-                            duration: const Duration(milliseconds: 150),
-                            width: isListening ? 68 : 56, // crece al escuchar
-                            height: isListening ? 68 : 56,
-                            decoration: BoxDecoration(
-                              shape: BoxShape.circle,
-                              color: isListening
-                                  ? AppColors.danger
-                                  : _permissionGranted
-                                  ? AppColors.primary
-                                  : AppColors.disabled,
-                              boxShadow: isListening
-                                  ? [
+                        SizedBox(
+                          width: 84,
+                          height: 84,
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              // Anillo de pulso animado mientras escucha
+                              if (isListening)
+                                const _PulseRing(
+                                  color: AppColors.danger,
+                                  maxSize: 84,
+                                ),
+                              GestureDetector(
+                                onTap: _permissionGranted ? null : _onMicTap,
+                                onLongPressStart: _permissionGranted
+                                    ? (_) => _onMicPressStart()
+                                    : null,
+                                onLongPressEnd: _permissionGranted
+                                    ? (_) => _onMicPressEnd()
+                                    : null,
+                                child: AnimatedContainer(
+                                  duration: const Duration(milliseconds: 150),
+                                  width: isListening ? 68 : 56, // crece al escuchar
+                                  height: isListening ? 68 : 56,
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: isListening
+                                        ? AppColors.danger
+                                        : _permissionGranted
+                                        ? AppColors.primary
+                                        : AppColors.disabled,
+                                    border: Border.all(
+                                      color: Colors.white.withValues(alpha: 0.18),
+                                      width: 1.5,
+                                    ),
+                                    boxShadow: [
                                       BoxShadow(
-                                        color: AppColors.danger,
-                                        blurRadius: 18,
-                                        spreadRadius: 4,
+                                        color: (isListening
+                                                ? AppColors.danger
+                                                : _permissionGranted
+                                                ? AppColors.primary
+                                                : Colors.black)
+                                            .withValues(alpha: 0.4),
+                                        blurRadius: isListening ? 18 : 8,
+                                        spreadRadius: isListening ? 2 : 0,
+                                        offset: const Offset(0, 2),
                                       ),
-                                    ]
-                                  : [],
-                            ),
-                            child: Icon(
-                              isListening
-                                  ? Icons.mic
-                                  : _permissionGranted
-                                  ? Icons.mic_none
-                                  : Icons.mic_off,
-                              color: Colors.white,
-                              size: 26,
-                            ),
+                                    ],
+                                  ),
+                                  child: Icon(
+                                    isListening
+                                        ? Icons.mic
+                                        : _permissionGranted
+                                        ? Icons.mic_none
+                                        : Icons.mic_off,
+                                    color: Colors.white,
+                                    size: 26,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
@@ -762,6 +600,271 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Panel de estado de reconocimiento de voz ─────────────────────────────────
+// Tres estados visuales: idle (esperando), listening (escuchando, transcripción
+// en vivo destacada) y detected (comando reconocido con su color/icono).
+class _VoiceStatePanel extends StatelessWidget {
+  final bool isListening;
+  final bool permissionGranted;
+  final bool hasCommand;
+  final String rawText;
+  final String lastCommand;
+  final IconData lastIcon;
+  final Color lastColor;
+
+  const _VoiceStatePanel({
+    required this.isListening,
+    required this.permissionGranted,
+    required this.hasCommand,
+    required this.rawText,
+    required this.lastCommand,
+    required this.lastIcon,
+    required this.lastColor,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    // Color de acento según el estado activo
+    final Color accent = isListening
+        ? AppColors.danger
+        : hasCommand
+            ? lastColor
+            : AppColors.textSecondary;
+
+    final String headerLabel = isListening ? 'LISTENING' : 'VOICE COMMAND';
+    final IconData headerIcon = isListening ? Icons.graphic_eq : Icons.mic;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeInOut,
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        border: Border.all(
+          color: (isListening || hasCommand) ? accent : AppColors.border,
+          width: (isListening || hasCommand) ? 1.5 : 1.0,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: isListening
+            ? [
+                BoxShadow(
+                  color: AppColors.danger.withValues(alpha: 0.25),
+                  blurRadius: 14,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header de sección — estilo SetupScreen
+          Row(
+            children: [
+              Icon(headerIcon, size: 11, color: accent),
+              const SizedBox(width: 5),
+              Text(
+                headerLabel,
+                style: TextStyle(
+                  color: accent,
+                  fontSize: 9,
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              if (isListening) ...[
+                const SizedBox(width: 6),
+                const _ListeningDots(color: AppColors.danger),
+              ],
+            ],
+          ),
+          const SizedBox(height: 7),
+          // Cuerpo del panel según estado
+          if (isListening)
+            // Transcripción en vivo destacada
+            Text(
+              rawText.isEmpty ? 'Escuchando…' : rawText,
+              style: TextStyle(
+                color: rawText.isEmpty
+                    ? AppColors.textSecondary
+                    : AppColors.textPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                fontStyle: rawText.isEmpty ? FontStyle.italic : FontStyle.normal,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            )
+          else if (hasCommand)
+            // Último comando reconocido
+            Row(
+              children: [
+                Icon(lastIcon, color: lastColor, size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    lastCommand,
+                    style: TextStyle(
+                      color: lastColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+            )
+          else
+            // Estado idle — instrucciones
+            Row(
+              children: [
+                Icon(
+                  permissionGranted ? Icons.touch_app : Icons.mic_off,
+                  color: AppColors.textSecondary,
+                  size: 18,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    permissionGranted
+                        ? 'Mantén pulsado 🎤 y di un comando'
+                        : 'Pulsa 🎤 para activar el micrófono',
+                    style: const TextStyle(
+                      color: AppColors.textSecondary,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+// Tres puntos que parpadean en secuencia — indicador "escuchando".
+class _ListeningDots extends StatefulWidget {
+  final Color color;
+  const _ListeningDots({required this.color});
+
+  @override
+  State<_ListeningDots> createState() => _ListeningDotsState();
+}
+
+class _ListeningDotsState extends State<_ListeningDots>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        return Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(3, (i) {
+            // Cada punto desfasado 1/3 de ciclo
+            final phase = (_ctrl.value - i / 3) % 1.0;
+            final opacity = (0.3 + 0.7 * (1 - (phase * 2 - 1).abs())).clamp(0.3, 1.0);
+            return Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 1.5),
+              child: Opacity(
+                opacity: opacity,
+                child: Container(
+                  width: 4,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: widget.color,
+                  ),
+                ),
+              ),
+            );
+          }),
+        );
+      },
+    );
+  }
+}
+
+// Anillo concéntrico que se expande y desvanece en bucle alrededor del micrófono.
+class _PulseRing extends StatefulWidget {
+  final Color color;
+  final double maxSize;
+  const _PulseRing({required this.color, required this.maxSize});
+
+  @override
+  State<_PulseRing> createState() => _PulseRingState();
+}
+
+class _PulseRingState extends State<_PulseRing>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: _ctrl,
+      builder: (context, _) {
+        // Dos ondas desfasadas para un pulso continuo
+        return Stack(
+          alignment: Alignment.center,
+          children: List.generate(2, (i) {
+            final t = (_ctrl.value + i * 0.5) % 1.0;
+            final size = widget.maxSize * (0.65 + 0.35 * t);
+            final opacity = (1.0 - t).clamp(0.0, 1.0) * 0.5;
+            return Container(
+              width: size,
+              height: size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                border: Border.all(
+                  color: widget.color.withValues(alpha: opacity),
+                  width: 2,
+                ),
+              ),
+            );
+          }),
+        );
+      },
     );
   }
 }

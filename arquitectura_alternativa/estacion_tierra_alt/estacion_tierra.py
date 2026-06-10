@@ -101,6 +101,13 @@ if DEVICE == 'cuda':
 # modelo yolo para tello (detecta poses)
 from ultralytics import YOLO
 pose_model = YOLO('yolov8n-pose.onnx')
+# Warmup: construir la sesion ONNX Runtime y el primer forward AHORA (al abrir la ET),
+# no en la primera deteccion de Follow/Orbit. Mismo imgsz que _detect_persons.
+try:
+    pose_model(np.zeros((480, 640, 3), dtype=np.uint8), imgsz=320, verbose=False)
+    print('[INFO] pose_model (follow/orbit) warmup OK')
+except Exception as e:
+    print(f'[WARN] pose_model warmup fallo: {e}')
 
 # ============================================================
 # LOOP ASYNCIO
@@ -116,44 +123,25 @@ threading.Thread(target=_start_loop, args=(loop,), daemon=True).start()
 
 # ============================================================
 # FOLLOW CONTROLLER
-# El import se realiza AQUI, despues de que pose_model este
-# definido, para que follow_controller.py pueda hacer
-# `from estacion_tierra import pose_model` sin ImportError.
+# El import se realiza AQUI, despues de que pose_model este definido.
+# pose_model se INYECTA al construir FollowController (no se importa desde
+# dentro): la ET corre como __main__, así que `from estacion_tierra import
+# pose_model` re-ejecutaría todo el fichero y colgaría en su
+# `threading.Event().wait()` final.
 # ============================================================
 
 from follow_controller import FollowController, ORBIT_RADIUS_CM
 
 _follow_ctrl: FollowController = None
 
-# ============================================================
-# ORBIT (funcion legacy — mantiene el guard de joystick)
-# ============================================================
-
-def run_orbit(radius_cm: int, clockwise: bool):
-    global _orbit_active
-    print(f"[ORBIT] Iniciando — tello={tello}, state={tello.state if tello else 'None'}")
-    yaw_speed = 30
-    fwd_speed = max(10, min(50, int(radius_cm * 0.15)))
-    if not clockwise:
-        yaw_speed = -yaw_speed
-    try:
-        interval = 1.0 / 20.0
-        while _orbit_active:
-            print(f"[ORBIT] tick state={tello.state}")
-            if tello is None or tello.state != 'flying':
-                print(f"[ORBIT] Saliendo — state={tello.state}")
-                break
-            t0 = time.time()
-            tello.rc(0, fwd_speed, 0, yaw_speed)
-            elapsed = time.time() - t0
-            time.sleep(max(0.0, interval - elapsed))
-    finally:
-        _orbit_active = False
-        try:
-            if tello:
-                tello.rc(0, 0, 0, 0)
-        except Exception:
-            pass
+def _on_follow_stream_dead():
+    """Callback invocado por FollowController cuando el stream de vídeo muere.
+    Resetea los globals de follow/orbit para que la telemetría refleje 'off'."""
+    global _follow_mode, _orbit_active, _follow_ctrl
+    print('[FOLLOW] Stream muerto — reseteando estado follow/orbit')
+    _follow_mode = False
+    _orbit_active = False
+    _follow_ctrl = None
 
 # ============================================================
 # MQTT callbacks
@@ -197,11 +185,14 @@ def process_tello_telemetry():
                 'tofDistance': _follow_ctrl._tof_display if (_follow_ctrl and _follow_mode) else -1.0,
                 'orbitStatus': _follow_ctrl._orbit_status if (_follow_ctrl and _follow_ctrl._orbit_mode) else 'off',
                 'orbitTofDistance': _follow_ctrl._orbit_tof_display if (_follow_ctrl and _follow_ctrl._orbit_mode) else -1.0,
+                'telloWifi': getattr(tello, 'wifi', None),
+                'telloTempC': getattr(tello, 'temp_c', None),
+                'telloFlightTime': getattr(tello, 'flight_time_s', None),
             })
             if telemetry_channel is not None and telemetry_channel.readyState == 'open':
                 loop.call_soon_threadsafe(telemetry_channel.send, payload)
         except Exception as e:
-            print("error")
+            print(f'[TELLO TELEMETRY] Error: {e}')
         time.sleep(0.2)
 
 def monitor_arm_state():
@@ -209,7 +200,22 @@ def monitor_arm_state():
     if _monitoring:
         return
     _monitoring = True
-    time.sleep(1)
+    # Esperar hasta que los motores estén efectivamente armados (máx. 10 s)
+    # antes de empezar a monitorizar el desarmado. Sin esta espera, la primera
+    # comprobación (a 1 s del comando arm) puede pillar al dron aún sin armar
+    # y publicar 'disarmed' espurio.
+    for _ in range(10):
+        if dron.vehicle is None:
+            _monitoring = False
+            return
+        if dron.vehicle.motors_armed():
+            break
+        time.sleep(1)
+    else:
+        # El dron no llegó a armarse en 10 s — no publicar nada
+        _monitoring = False
+        return
+    # Ahora sí: vigilar que no se desarme inesperadamente
     for _ in range(300):
         if dron.vehicle is None:
             break
@@ -299,7 +305,7 @@ def on_message(client, userdata, message):
                         print('[TELLO] Error al conectar')
                         client.publish('groundStation/mobileFlutter/disconnected', 'connection_failed')
                         return
-                    tello.startTelemetry(freq_hz=5)
+                    tello.startTelemetry(freq_hz=10)
                     threading.Thread(target=process_tello_telemetry, daemon=True).start()
                 else:
                     print(f'[TELLO] Recuperacion de sesion - estado: "{tello.state}"')
@@ -325,7 +331,7 @@ def on_message(client, userdata, message):
                 try:
                     dron.connect(conn_str, baud); dron._conn_str = conn_str
                     if dron.vehicle is None: raise Exception('Vehicle is None')
-                    dron.frequency = 2
+                    dron.frequency = 10
                     dron.send_telemetry_info(process_telemetry_info)
                 except Exception as e:
                     print(f'Error al conectar: {e}')
@@ -373,9 +379,13 @@ def on_message(client, userdata, message):
                 threading.Thread(target=despegar_tello, daemon=True).start()
             return
         if dron.state in ('armed', 'flying'):
-            parts_p = message.payload.decode().split(':')
-            altitude = int(parts_p[0])
-            speed = float(parts_p[1]) if len(parts_p) > 1 else dron.navSpeed
+            try:
+                parts_p = message.payload.decode().split(':')
+                altitude = int(parts_p[0])
+                speed = float(parts_p[1]) if len(parts_p) > 1 else dron.navSpeed
+            except (ValueError, IndexError) as e:
+                print(f'[TAKEOFF] payload inválido: {e}')
+                return
             def despegar():
                 dron.navSpeed = speed; dron.takeOff(altitude)
                 dron.vehicle.set_mode('LOITER'); dron.changeNavSpeed(speed)
@@ -410,7 +420,11 @@ def on_message(client, userdata, message):
 
     if command == 'speed':
         if flight_mode == 'tello': return
-        spd = float(message.payload.decode())
+        try:
+            spd = float(message.payload.decode())
+        except ValueError as e:
+            print(f'[SPEED] payload inválido: {e}')
+            return
         dron.navSpeed = spd
         if dron.vehicle: dron.changeNavSpeed(spd)
 
@@ -424,11 +438,9 @@ def on_message(client, userdata, message):
     if command == 'flip':
         if flight_mode == 'tello' and tello and tello.state == 'flying':
             d = message.payload.decode().strip()
-            if _follow_ctrl is not None:
-                with _follow_ctrl._sdk_lock:
-                    try: tello._tello.flip(d[0])
-                    except Exception as e: print(f'[TELLO] Flip error: {e}')
-            else:
+            # flip es un comando con respuesta: serializar con el lock unico del
+            # Tello para no cruzar respuestas con telemetría/tof/stream.
+            with tello._sdk_lock:
                 try: tello._tello.flip(d[0])
                 except Exception as e: print(f'[TELLO] Flip error: {e}')
 
@@ -438,8 +450,11 @@ def on_message(client, userdata, message):
 
             if payload_str == 'stop':
                 print('[ORBIT] STOP recibido')
-                if _follow_ctrl is not None and _follow_ctrl._orbit_mode:
-                    _follow_ctrl.deactivate_orbit()
+                if _follow_ctrl is not None:
+                    if _follow_ctrl._orbit_mode:
+                        _follow_ctrl.deactivate_orbit()
+                    _follow_ctrl.stop()
+                    _follow_ctrl = None
                 _orbit_active = False
                 if _orbit_thread and _orbit_thread.is_alive():
                     _orbit_thread.join(timeout=0.3)
@@ -454,26 +469,15 @@ def on_message(client, userdata, message):
                     clockwise = True
 
                 if _follow_mode:
-                    print('[ORBIT] Follow activo — reutilizando FollowController')
+                    print('[ORBIT] Follow activo — reiniciando como Orbit')
                     _follow_mode = False
 
-                if _follow_ctrl is None:
-                    _follow_ctrl = FollowController(tello)
-                else:
-                    _follow_ctrl._tello = tello
-                    _follow_ctrl._active = True
-                    if not _follow_ctrl._rc_thread.is_alive():
-                        _follow_ctrl._rc_thread = threading.Thread(
-                            target=_follow_ctrl._rc_loop, daemon=True)
-                        _follow_ctrl._rc_thread.start()
-                    if not _follow_ctrl._vid_thread.is_alive():
-                        _follow_ctrl._vid_thread = threading.Thread(
-                            target=_follow_ctrl._video_loop, daemon=True)
-                        _follow_ctrl._vid_thread.start()
-                    if not _follow_ctrl._tof_thread.is_alive():
-                        _follow_ctrl._tof_thread = threading.Thread(
-                            target=_follow_ctrl._tof_loop, daemon=True)
-                        _follow_ctrl._tof_thread.start()
+                # Siempre construir un FollowController fresco (hilos nuevos) para
+                # evitar hilos zombi de una sesión Follow/Orbit anterior.
+                if _follow_ctrl is not None:
+                    _follow_ctrl.stop()
+                _follow_ctrl = FollowController(tello, pose_model=pose_model)
+                _follow_ctrl.on_stream_dead = _on_follow_stream_dead
 
                 _follow_ctrl.activate_orbit(radius_cm=radius_cm, clockwise=clockwise)
                 _orbit_active = True
@@ -490,27 +494,18 @@ def on_message(client, userdata, message):
                     _orbit_active = False
                     if _orbit_thread and _orbit_thread.is_alive():
                         _orbit_thread.join(timeout=0.5)
-                if _follow_ctrl is None:
-                    _follow_ctrl = FollowController(tello)
-                else:
-                    _follow_ctrl._tello = tello
-                    _follow_ctrl._active = True
-                    _follow_ctrl.reset_pids()
-                    if not _follow_ctrl._rc_thread.is_alive():
-                        _follow_ctrl._rc_thread = threading.Thread(
-                            target=_follow_ctrl._rc_loop, daemon=True)
-                        _follow_ctrl._rc_thread.start()
-                    if not _follow_ctrl._vid_thread.is_alive():
-                        _follow_ctrl._vid_thread = threading.Thread(
-                            target=_follow_ctrl._video_loop, daemon=True)
-                        _follow_ctrl._vid_thread.start()
-                    if not _follow_ctrl._tof_thread.is_alive():
-                        _follow_ctrl._tof_thread = threading.Thread(
-                            target=_follow_ctrl._tof_loop, daemon=True)
-                        _follow_ctrl._tof_thread.start()
+                # Siempre construir un FollowController fresco (hilos nuevos) para
+                # evitar hilos zombi de una sesión anterior que dejarían el modo
+                # atascado en 'waiting'. El deactivate deja _follow_ctrl=None.
+                if _follow_ctrl is not None:
+                    _follow_ctrl.stop()
+                _follow_ctrl = FollowController(tello, pose_model=pose_model)
+                _follow_ctrl.on_stream_dead = _on_follow_stream_dead
                 print('[TELLO] Follow mode ACTIVADO')
             else:
-                if _follow_ctrl: _follow_ctrl.stop()
+                if _follow_ctrl:
+                    _follow_ctrl.stop()
+                    _follow_ctrl = None
                 print('[TELLO] Follow mode DESACTIVADO')
 
     if command == 'detectionMode':
@@ -670,6 +665,8 @@ class CameraVideoTrack(VideoStreamTrack):
             frame = tello.get_frame()
             if frame is None:
                 frame = np.zeros((480, 640, 3), dtype=np.uint8)
+            # djitellopy ya entrega RGB y el VideoFrame se emite como rgb24: no
+            # convertir aquí (hacerlo intercambiaría R/B en el vídeo en vivo).
         else:
             ret, frame = self.cap.read()
             if not ret:
@@ -685,7 +682,9 @@ class CameraVideoTrack(VideoStreamTrack):
                            _follow_ctrl is not None and
                            tello.state == 'flying')
             if ctrl_active:
-                debug = _follow_ctrl.get_debug_frame()
+                # Solo usar el debug frame si es reciente; si el follow loop se
+                # retrasa/atasca, mostramos el frame en vivo (no se congela el stream).
+                debug = _follow_ctrl.get_debug_frame(max_age_s=0.5)
                 if debug is not None:
                     frame = debug
             vf = VideoFrame.from_ndarray(frame, format='rgb24')
@@ -727,8 +726,19 @@ async def webrtc_client():
     global _pc, telemetry_channel, _camera_track, _webrtc_running, _ws
 
     if _webrtc_running:
-        print('[WEBRTC] Ya hay una sesion activa, ignorando.')
-        return
+        print('[WEBRTC] Sesión previa activa — cerrando antes de reconectar.')
+        try:
+            if _ws is not None: await _ws.close()
+        except Exception: pass
+        try:
+            if _pc is not None: await _pc.close()
+        except Exception: pass
+        for _ in range(30):              # esperar máx 3s al finally previo
+            if not _webrtc_running: break
+            await asyncio.sleep(0.1)
+        if _webrtc_running:
+            print('[WEBRTC] Sesión previa no liberó el flag; abortando.')
+            return
     _webrtc_running = True
 
     if _pc is not None:

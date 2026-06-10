@@ -74,8 +74,16 @@ def _telemetry_loop(self, period_s: float):
             pass
 
         # WiFi SNR (Signal-to-Noise Ratio)
+        # Es el ÚNICO getter que envía un comando con respuesta por el socket del
+        # SDK (los demás get_* leen del stream de estado y son seguros). Se toma
+        # _sdk_lock para no cruzar su respuesta con streamon/EXT tof?/etc.
         try:
-            w = self._tello.query_wifi_signal_noise_ratio()
+            lock = getattr(self, "_sdk_lock", None)
+            if lock is not None:
+                with lock:
+                    w = self._tello.query_wifi_signal_noise_ratio()
+            else:
+                w = self._tello.query_wifi_signal_noise_ratio()
             if w is not None:
                 self.wifi = int(w)
         except Exception:

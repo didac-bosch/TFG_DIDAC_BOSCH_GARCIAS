@@ -1,4 +1,21 @@
+import threading
+
+
 class TelloDron(object):
+
+    # Lock unico del socket de comandos del SDK Tello.
+    # djitellopy NO es thread-safe para comandos que esperan respuesta
+    # (send_command_with_return / send_read_command / send_control_command):
+    # comparten una unica cola `responses`, asi que dos hilos concurrentes
+    # cruzan respuestas. TODO comando que espere respuesta (stream_on/off,
+    # wifi?, EXT tof?, takeoff/land/move via _send, flip) debe tomar este lock.
+    # rc (send_rc_control / send_command_without_return) NO lo necesita y se
+    # deja libre para no bloquear el bucle RC a 20 Hz.
+    # Se define a NIVEL DE CLASE para que el atributo exista SIEMPRE en cualquier
+    # instancia (aunque __init__ no se complete) y para garantizar que todos los
+    # hilos comparten exactamente el mismo lock. RLock porque _send puede entrarse
+    # con el lock ya tomado por capas superiores.
+    _sdk_lock = threading.RLock()
 
     def __init__(self, id=None):
         print(f"TelloDron inicializado (ID: {id if id else 'sin ID'})")

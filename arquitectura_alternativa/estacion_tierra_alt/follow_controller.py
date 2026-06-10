@@ -27,7 +27,10 @@ class PIDController:
             return 0.0
         self.error = error
         self.integral_error += error * dt
-        self.integral_error = max(self.output_min, min(self.output_max, self.integral_error))
+        # Clamp ki*integral to output range (anti-windup on the I contribution, not the raw accumulator)
+        if self.ki != 0:
+            i_max = abs(self.output_max / self.ki)
+            self.integral_error = max(-i_max, min(i_max, self.integral_error))
         self.derivative_error = (error - self.error_last) / dt
         self.error_last = error
         output = self.kp * self.error + self.ki * self.integral_error + self.kd * self.derivative_error
@@ -44,7 +47,7 @@ class PIDController:
 # ============================================================
 
 # Ganancias PID
-GAINS_YAW_PID         = (0.3,  0.002,  0.1)   # kp, ki, kd
+GAINS_YAW_PID         = (0.2,  0.002,  0.1)   # kp, ki, kd
 # Altitud: error en píxeles → velocidad ud cm/s
 GAINS_ALTITUDE_PID    = (-0.08,  -0.002,  -0.020)
 # Forward/back ToF: error en cm → velocidad fb cm/s
@@ -77,7 +80,7 @@ FRONT_TOF_DISCONTINUITY_FREEZE_S    = 0.4  # s congelando fb tras salto válido�
 TARGET_EMA_ALPHA    = 0.25
 
 # Detección / tracking
-YOLO_FRAME_STRIDE   = 25
+YOLO_FRAME_STRIDE   = 6
 CONF_THRESHOLD      = 0.45
 MIN_BBOX_W          = 30
 MIN_BBOX_H          = 50
@@ -104,9 +107,10 @@ ORBIT_ALIGN_PX_THRESH        = 30      # píxeles máximos de error yaw en ALIGN
 ORBIT_ALIGN_STABLE_FRAMES    = 12      # frames consecutivos estables para entrar en ORBIT
 ORBIT_ALIGN_TIMEOUT_S        = 8.0     # timeout máximo en ALIGN antes de reintentar
 
-ORBIT_TANGENTIAL_SPEED       = 18      # lr feedforward base [RC units, 0–100]
+ORBIT_TANGENTIAL_SPEED       = 25      # lr feedforward base [RC units, 0–100]
 ORBIT_LR_MAX_VELOCITY        = 35      # límite lr (feedforward + PID)
-ORBIT_RAMP_STEP              = 0.04    # rampa: ~25 ciclos (1.25s) para máximo lr
+ORBIT_RAMP_STEP              = 0.06    # rampa: ~17 ciclos (~0.57s) para máximo lr
+ORBIT_YAW_FF_GAIN            = 0.7     # escala yaw feedforward relativo a lr tangencial
 ORBIT_MAX_RADIUS_CM          = 170.0   # ToF máximo en ORBIT → transición a APPROACH
 ORBIT_LOST_FRAMES            = 6       # frames consecutivos sin target → estado 'lost'
 ORBIT_LOST_GRACE_S           = 3.0     # gracia en 'lost' antes de 'search'
@@ -125,12 +129,32 @@ class FollowController:
     Arquitectura de hilos conservada (vid_thread, rc_thread, tof_thread).
     """
 
-    def __init__(self, tello_ref):
+    def __init__(self, tello_ref, pose_model=None):
         self._tello = tello_ref
         self._active = True
+        self.on_stream_dead = None  # callable() — llamado cuando el stream de vídeo muere
 
-        # ── SDK lock unificado (tof_loop + rc_loop comparten socket) ──
-        self._sdk_lock = threading.Lock()
+        # Modelo de poses YOLO. Se INYECTA desde estacion_tierra para NO hacer
+        # `from estacion_tierra import pose_model` aquí: la ET se ejecuta como
+        # `__main__`, así que ese import re-ejecutaría todo el fichero como un
+        # módulo nuevo y se quedaría colgado en su `threading.Event().wait()`
+        # final, congelando el _video_loop en la primera detección (el dron
+        # giraba sin detectar nunca). Fallback robusto vía sys.modules por si se
+        # construye sin pasar el modelo.
+        if pose_model is None:
+            import sys
+            _mm = sys.modules.get('__main__')
+            if _mm is None or not hasattr(_mm, 'pose_model'):
+                _mm = sys.modules.get('estacion_tierra')
+            pose_model = getattr(_mm, 'pose_model', None) if _mm else None
+        self._pose_model = pose_model
+
+        # ── SDK lock unificado ──
+        # Compartido con el resto de accesos al socket de comandos del Tello
+        # (telemetría wifi?, stream_on/off, _send, flip). Se usa el lock que vive
+        # en la instancia TelloDron para que tof? no cruce respuestas con esos
+        # hilos. Fallback a un Lock propio si por algún motivo no existiera.
+        self._sdk_lock = getattr(tello_ref, '_sdk_lock', None) or threading.RLock()
 
         # ── RC ────────────────────────────────────────────────────────
         self._rc_lock = threading.Lock()
@@ -234,6 +258,7 @@ class FollowController:
         # ── Frame debug ───────────────────────────────────────────────
         self._frame_lock   = threading.Lock()
         self._debug_frame  = None
+        self._debug_frame_ts = 0.0   # time.time() del último _debug_frame escrito
 
         # ── Telemetría ────────────────────────────────────────────────
         self._follow_status: str   = 'waiting'
@@ -254,7 +279,7 @@ class FollowController:
         while self._active:
             try:
                 with self._sdk_lock:
-                    raw = self._tello._tello.send_command_with_return('EXT tof?', timeout=1)
+                    raw = self._tello._tello.send_command_with_return('EXT tof?', timeout=0.15)
                 if raw and raw.strip().startswith('tof '):
                     mm = int(raw.strip().split()[1])
                     new_cm = -1.0 if mm >= 8190 else mm / 10.0
@@ -266,6 +291,7 @@ class FollowController:
                         self.front_tof_cm = new_cm
             except Exception:
                 pass
+            time.sleep(0.1)
 
     # ------------------------------------------------------------------ RC loop
     def _rc_loop(self):
@@ -274,18 +300,28 @@ class FollowController:
             with self._rc_lock:
                 lr, fb, ud, yaw = self._rc
             try:
-                with self._sdk_lock:
-                    self._tello.rc(lr, fb, ud, yaw)
+                # rc → send_rc_control (sin respuesta): no toca la cola `responses`
+                # y NO debe tomar _sdk_lock, o el bucle a 20 Hz se bloquearía detrás
+                # de un tof?/wifi? en espera.
+                self._tello.rc(lr, fb, ud, yaw)
             except Exception as e:
                 print(f'[FOLLOW] rc error: {e}')
             elapsed = time.time() - t0
             time.sleep(max(0.0, RC_LOOP_INTERVAL_S - elapsed))
 
     # ------------------------------------------------------------------ Detección YOLO
-    def _detect_persons(self, frame_rgb):
-        """Retorna lista de (x1,y1,x2,y2, shoulder_cy_or_None)."""
-        from estacion_tierra import pose_model
-        results = pose_model(frame_rgb, imgsz=320, verbose=False)
+    def _detect_persons(self, frame_bgr, frame_w=FRAME_W, frame_h=FRAME_H):
+        """Retorna lista de (x1,y1,x2,y2, shoulder_cy_or_None).
+
+        IMPORTANTE: ultralytics asume que un array numpy viene en BGR (convención
+        cv2) y lo invierte internamente a RGB antes de inferir. djitellopy entrega
+        los frames en RGB, así que aquí se debe pasar la versión ya convertida a
+        BGR (frame_bgr); pasar el RGB crudo intercambia R/B y la detección falla.
+        """
+        pose_model = self._pose_model
+        if pose_model is None:
+            raise RuntimeError('pose_model no inyectado en FollowController')
+        results = pose_model(frame_bgr, imgsz=320, verbose=False)
         persons = []
         for result in results:
             if result.boxes is None:
@@ -296,8 +332,8 @@ class FollowController:
                     continue
                 x1 = max(0, int(box[0]))
                 y1 = max(0, int(box[1]))
-                x2 = min(int(box[2]), FRAME_W)
-                y2 = min(int(box[3]), FRAME_H)
+                x2 = min(int(box[2]), frame_w)
+                y2 = min(int(box[3]), frame_h)
                 if (x2 - x1) < MIN_BBOX_W or (y2 - y1) < MIN_BBOX_H:
                     continue
                 shoulder_cy = None
@@ -326,9 +362,22 @@ class FollowController:
 
     # ------------------------------------------------------------------ Vídeo loop principal
     def _video_loop(self):
+        """Wrapper robusto: si el bucle interno lanza una excepción, la registra
+        y reanuda en vez de morir en silencio (lo que dejaría el modo atascado)."""
+        import traceback
+        while self._active:
+            try:
+                self._video_loop_inner()
+            except Exception:
+                print('[FOLLOW] excepcion en _video_loop:')
+                traceback.print_exc()
+                time.sleep(0.1)
+
+    def _video_loop_inner(self):
         frame_count        = 0
         consecutive_none   = 0
         detected_persons   = []
+        prev_t             = time.time()
 
         while self._active:
             frame_rgb = self._tello.get_frame()
@@ -338,6 +387,8 @@ class FollowController:
                 if consecutive_none > 300:
                     print('[FOLLOW] Stream muerto, deteniendo.')
                     self._active = False
+                    if callable(self.on_stream_dead):
+                        self.on_stream_dead()
                     break
                 time.sleep(0.01)
                 continue
@@ -346,13 +397,21 @@ class FollowController:
             frame_count += 1
             frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
             actual_h, actual_w = frame_bgr.shape[:2]
+            frame_center_x = actual_w // 2
+
+            _now_t = time.time()
+            dt = max(0.01, min(_now_t - prev_t, 0.2))
+            prev_t = _now_t
 
             # Setpoint vertical: hombros al 25% superior del frame
             target_setpoint_y_px = int(actual_h * TARGET_Y_RATIO)
 
             # ── Detección YOLO (cada STRIDE frames) ─────────────────
             if frame_count % YOLO_FRAME_STRIDE == 0:
-                detected_persons = self._detect_persons(frame_rgb)
+                try:
+                    detected_persons = self._detect_persons(frame_bgr, actual_w, actual_h)
+                except Exception as e:
+                    print(f'[FOLLOW] error deteccion YOLO: {e}')
 
             # ── Selección del mejor objetivo ────────────────────────
             last_point = (
@@ -414,11 +473,11 @@ class FollowController:
             # ────────────────────────────────────────────────────────
             # INTERCEPTING
             # ────────────────────────────────────────────────────────
-            if tracking_target:
+            if not self._orbit_mode and tracking_target:
                 if tracking_target_raw:
                     self._last_target_seen_time = now
                     # Actualizar lado del target (para recovery yaw)
-                    side = target_x_px - FRAME_CENTER_X
+                    side = target_x_px - frame_center_x
                     if side > 0:
                         self._last_target_side = 1
                     elif side < 0:
@@ -453,11 +512,11 @@ class FollowController:
 
                 # ── Altitud PID ──────────────────────────────────────
                 error_altitude = self._target_smoothed_y_px - target_setpoint_y_px
-                ud = self.altitude_pid.compute(error_altitude, RC_LOOP_INTERVAL_S)
+                ud = self.altitude_pid.compute(error_altitude, dt)
 
                 # ── Yaw PID ──────────────────────────────────────────
-                error_yaw = self._target_smoothed_x_px - FRAME_CENTER_X
-                yaw = self.yaw_pid.compute(error_yaw, RC_LOOP_INTERVAL_S)
+                error_yaw = self._target_smoothed_x_px - frame_center_x
+                yaw = self.yaw_pid.compute(error_yaw, dt)
 
                 # ── Pitch PID (ToF prioritario / bbox fallback) ──────
                 # Fuente ToF: usa hysteresis igual que proyecto referencia
@@ -470,7 +529,7 @@ class FollowController:
                     # Sembrar error_last al entrar en ToF → evita spike D-term
                     if self._pitch_source_last != 'tof':
                         self.pitch_pid.error_last = error_pitch
-                    fb = self.pitch_pid.compute(error_pitch, RC_LOOP_INTERVAL_S)
+                    fb = self.pitch_pid.compute(error_pitch, dt)
                     self.pitch_bbox_pid.reset_integral()
                     self._follow_status = 'tof'
                     self._tof_display = tof_for_pid
@@ -484,7 +543,7 @@ class FollowController:
                     # Sembrar error_last al entrar en bbox → evita spike D-term
                     if self._pitch_source_last != 'bbox':
                         self.pitch_bbox_pid.error_last = error_pitch
-                    fb = self.pitch_bbox_pid.compute(error_pitch, RC_LOOP_INTERVAL_S)
+                    fb = self.pitch_bbox_pid.compute(error_pitch, dt)
                     self.pitch_pid.reset_integral()
                     self._follow_status = 'following'
                     self._tof_display = -1.0
@@ -512,7 +571,8 @@ class FollowController:
             # ────────────────────────────────────────────────────────
             # HOVER (grace period)
             # ────────────────────────────────────────────────────────
-            elif (self._last_target_seen_time > 0 and
+            elif (not self._orbit_mode and
+                  self._last_target_seen_time > 0 and
                   (now - self._last_target_seen_time) < TARGET_LOST_GRACE_S):
                 self._follow_status = 'grace'
                 self._tof_display = -1.0
@@ -532,7 +592,7 @@ class FollowController:
             # ────────────────────────────────────────────────────────
             # SEARCHING (spin 360°)
             # ────────────────────────────────────────────────────────
-            else:
+            elif not self._orbit_mode:
                 self._follow_status = 'searching'
                 self._tof_display   = -1.0
                 self._target_ema_initialized    = False
@@ -553,7 +613,7 @@ class FollowController:
                     spin_sign = self._last_target_side if self._last_target_side != 0 else 1
                     yaw = spin_sign * SEARCH_SPIN_VELOCITY_DEG_S
                     # Acumular ángulo girado
-                    self._search_spin_angle_deg += SEARCH_SPIN_VELOCITY_DEG_S * RC_LOOP_INTERVAL_S
+                    self._search_spin_angle_deg += SEARCH_SPIN_VELOCITY_DEG_S * dt
                     if self._search_spin_angle_deg >= 360.0:
                         # 360° completados → parar, esperar nueva detección
                         yaw = 0
@@ -573,7 +633,7 @@ class FollowController:
                 # Solo aplicar altitud si hay target visible
                 if tracking_target and self._target_ema_initialized:
                     error_altitude = self._target_smoothed_y_px - target_setpoint_y_px
-                    ud = self.altitude_pid.compute(error_altitude, RC_LOOP_INTERVAL_S)
+                    ud = self.altitude_pid.compute(error_altitude, dt)
                 else:
                     ud = 0
                     self.altitude_pid.reset_integral()
@@ -635,20 +695,19 @@ class FollowController:
                         if self._orbit_lost_count >= ORBIT_LOST_FRAMES:
                             self._orbit_lost_start_time = now
                             self._orbit_state = 'lost'
-                        # Mantener último RC hasta confirmar pérdida
                     else:
                         self._orbit_lost_count = 0
 
                     if tracking_target:
                         # Yaw: centrar la persona
-                        error_yaw = self._target_smoothed_x_px - FRAME_CENTER_X
-                        yaw = self.yaw_pid.compute(error_yaw, RC_LOOP_INTERVAL_S)
+                        error_yaw = self._target_smoothed_x_px - frame_center_x
+                        yaw = self.yaw_pid.compute(error_yaw, dt)
 
                         if orbit_dist_source != 'none':
                             error_pitch = self._orbit_radius_cm - orbit_dist_cm
                             if self._pitch_source_last != 'tof_orbit':
                                 self.pitch_pid.error_last = error_pitch
-                            fb = self.pitch_pid.compute(error_pitch, RC_LOOP_INTERVAL_S)
+                            fb = self.pitch_pid.compute(error_pitch, dt)
 
                             # Transición a ALIGN cuando estamos suficientemente cerca
                             if orbit_dist_cm <= ORBIT_ALIGN_ENTER_CM:
@@ -683,13 +742,13 @@ class FollowController:
                         self.yaw_pid.reset_integral()
 
                     elif tracking_target and orbit_dist_source != 'none':
-                        error_yaw = self._target_smoothed_x_px - FRAME_CENTER_X
+                        error_yaw = self._target_smoothed_x_px - frame_center_x
                         error_dist = self._orbit_radius_cm - orbit_dist_cm
 
-                        yaw = self.yaw_pid.compute(error_yaw, RC_LOOP_INTERVAL_S)
+                        yaw = self.yaw_pid.compute(error_yaw, dt)
 
                         if abs(orbit_dist_cm - self._orbit_radius_cm) > ORBIT_ALIGN_EXIT_CM - self._orbit_radius_cm:
-                            fb = self.pitch_pid.compute(error_dist, RC_LOOP_INTERVAL_S)
+                            fb = self.pitch_pid.compute(error_dist, dt)
                         else:
                             fb = 0
                             self.pitch_pid.reset_integral()
@@ -700,8 +759,6 @@ class FollowController:
                         yaw_stable = abs(error_yaw) < ORBIT_ALIGN_PX_THRESH
                         dist_stable = abs(error_dist) < ORBIT_STABLE_TOF_MARGIN_CM
                         if yaw_stable and dist_stable:
-                            if not hasattr(self, '_orbit_align_stable_count'):
-                                self._orbit_align_stable_count = 0
                             self._orbit_align_stable_count += 1
                             if self._orbit_align_stable_count >= ORBIT_ALIGN_STABLE_FRAMES:
                                 # ¡Condiciones cumplidas! → ORBIT
@@ -733,15 +790,19 @@ class FollowController:
                         # Rampa de velocidad tangencial (suavizado de entrada)
                         self._orbit_ramp = min(1.0, self._orbit_ramp + ORBIT_RAMP_STEP)
 
-                        # Yaw: mantener persona centrada
-                        error_yaw = self._target_smoothed_x_px - FRAME_CENTER_X
-                        yaw = self.yaw_pid.compute(error_yaw, RC_LOOP_INTERVAL_S)
+                        # Yaw: feedforward anticipativo + PID correctivo
+                        # El FF iguala la rotación esperada al orbitar a velocidad lr
+                        error_yaw = self._target_smoothed_x_px - frame_center_x
+                        yaw_ff = (self._orbit_sign * ORBIT_YAW_FF_GAIN
+                                  * self._orbit_tangential_ff * self._orbit_ramp)
+                        yaw = int(round(yaw_ff + self.yaw_pid.compute(error_yaw, dt)))
+                        yaw = max(-YAW_MAX_VELOCITY, min(YAW_MAX_VELOCITY, yaw))
 
                         # LR tangencial: feedforward * rampa + corrección PID centrado
                         # El PID tangencial corrige el error de centrado horizontal
                         # para mantener la persona en el centro mientras orbita
                         tangential_correction = self.tangential_pid.compute(
-                            error_yaw, RC_LOOP_INTERVAL_S)
+                            error_yaw, dt)
                         lr = int(round(
                             self._orbit_sign * self._orbit_tangential_ff * self._orbit_ramp
                             + tangential_correction
@@ -760,7 +821,7 @@ class FollowController:
 
                             if self._pitch_source_last != 'tof_orbit':
                                 self.pitch_pid.error_last = error_dist
-                            fb = self.pitch_pid.compute(error_dist, RC_LOOP_INTERVAL_S)
+                            fb = self.pitch_pid.compute(error_dist, dt)
                         else:
                             fb = 0
                             self.pitch_pid.reset_integral()
@@ -818,7 +879,10 @@ class FollowController:
                     (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 180, 255), 2)
 
             # ── Latch pitch source para siguiente frame ───────────────
-            self._pitch_source_last = pitch_source
+            # En orbit, las ramas internas ya actualizan _pitch_source_last
+            # a 'tof_orbit'; no sobreescribir con el valor del Follow FSM.
+            if not self._orbit_mode:
+                self._pitch_source_last = pitch_source
 
             # ── Escribir RC ──────────────────────────────────────────
             with self._rc_lock:
@@ -832,7 +896,7 @@ class FollowController:
                 if tracked_shoulder_cy is not None:
                     cx_vis = int((x1 + x2) / 2)
                     cv2.circle(frame_bgr, (cx_vis, int(tracked_shoulder_cy)), 6, (0, 255, 255), -1)
-            cv2.circle(frame_bgr, (FRAME_CENTER_X, target_setpoint_y_px), 8, (0, 255, 0), 2)
+            cv2.circle(frame_bgr, (frame_center_x, target_setpoint_y_px), 8, (0, 255, 0), 2)
             if self._target_ema_initialized:
                 cv2.circle(frame_bgr, (int(self._target_smoothed_x_px),
                                     int(self._target_smoothed_y_px)), 5, (255, 0, 255), -1)
@@ -851,15 +915,31 @@ class FollowController:
             with self._frame_lock:
                 out = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
                 self._debug_frame = cv2.resize(out, (640, 480), interpolation=cv2.INTER_LINEAR)
+                self._debug_frame_ts = time.time()
+
+            # Pacing: limitar a ~30 Hz para evitar wind-up de integrales
+            time.sleep(max(0.0, (1.0 / 30.0) - (time.time() - _now_t)))
 
     # ------------------------------------------------------------------ API pública
-    def get_debug_frame(self):
+    def get_debug_frame(self, max_age_s: float = None):
+        """Devuelve el último frame debug. Si se pasa max_age_s y el frame es
+        más antiguo que ese umbral (el follow loop se ha retrasado/atascado),
+        devuelve None para que el caller muestre vídeo en vivo en su lugar."""
         with self._frame_lock:
+            if max_age_s is not None and (time.time() - self._debug_frame_ts) > max_age_s:
+                return None
             return self._debug_frame
 
     def stop(self):
         self._active = False
-        time.sleep(0.6)
+        # Esperar a que los hilos terminen de verdad (evita hilos zombi que
+        # impidan reiniciar Follow/Orbit limpiamente).
+        for name in ('_vid_thread', '_rc_thread', '_tof_thread'):
+            th = getattr(self, name, None)
+            if th is not None and th.is_alive():
+                th.join(timeout=1.5)
+                if th.is_alive():
+                    print(f'[FOLLOW] {name} no termino en el timeout de stop()')
         try:
             self._tello.rc(0, 0, 0, 0)
         except Exception:

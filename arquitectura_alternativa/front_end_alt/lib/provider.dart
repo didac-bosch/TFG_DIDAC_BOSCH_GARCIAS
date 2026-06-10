@@ -306,7 +306,9 @@ class DronProvider extends ChangeNotifier {
 
   double takeoffAltitude = 7.0;
   double flightSpeed = 3.0;
-  bool isConfigValid = true;
+  bool _altValid = true;
+  bool _speedValid = true;
+  bool get isConfigValid => _altValid && _speedValid;
 
   ControlMode selectedMode = ControlMode.classic;
 
@@ -420,11 +422,11 @@ class DronProvider extends ChangeNotifier {
   void setAltitude(String altValue) {
     final alt = double.tryParse(altValue.replaceAll(',', '.'));
     if (alt == null || alt < 2.0 || alt > 50.0) {
-      isConfigValid = false;
+      _altValid = false;
       notifyListeners();
       return;
     }
-    isConfigValid = true;
+    _altValid = true;
     takeoffAltitude = alt;
     notifyListeners();
   }
@@ -432,11 +434,11 @@ class DronProvider extends ChangeNotifier {
   void setSpeed(String speedValue) {
     final speed = double.tryParse(speedValue.replaceAll(',', '.'));
     if (speed == null || speed < 1.0 || speed > 15.0) {
-      isConfigValid = false;
+      _speedValid = false;
       notifyListeners();
       return;
     }
-    isConfigValid = true;
+    _speedValid = true;
     flightSpeed = speed;
     if (isConnected) {
       _mqtt.publish(Constants.topicSpeed, flightSpeed.toString());
@@ -636,6 +638,7 @@ class DronProvider extends ChangeNotifier {
       _mqtt.subscribe(Constants.topicMissionStarted);
       _mqtt.subscribe(Constants.topicMissionWaypoint);
       _mqtt.onMessageReceived = _handleMessage;
+      _mqtt.onDisconnected = _handleMqttDisconnected;
 
       // 1. Enviar modo ANTES del connect
       final modeStr = switch (droneConnectionMode) {
@@ -886,6 +889,8 @@ class DronProvider extends ChangeNotifier {
   void startOrbit({required int radiusCm, required bool clockwise}) {
     if (!isConnected || !isFlying || isOrbitMode) return;
     isOrbitMode = true;
+    // La ET reinicia Follow como Orbit; reflejarlo aquí para coherencia de UI.
+    isFollowMode = false;
     _stopJoystickTimer();
     final payload = '$radiusCm:${clockwise ? "cw" : "ccw"}';
     _mqtt.publish(Constants.topicOrbit, payload);
@@ -924,6 +929,14 @@ class DronProvider extends ChangeNotifier {
   //}
 
   // -----------------------HANDLER DE MENSAJES----------------------------------
+
+  void _handleMqttDisconnected() {
+    if (!isConnected) return; // desconexión durante el intento de conexión — ya gestionada
+    isConnected = false;
+    _joystickTimer?.cancel();
+    message = 'MQTT connection lost — commands unavailable';
+    notifyListeners();
+  }
 
   void _handleMessage(String topic, String payload) {
 
@@ -1062,17 +1075,12 @@ class DronProvider extends ChangeNotifier {
       _mqtt.disconnect();
       stopUserLocation();
 
-      if (payload.startsWith('mode_unavailable')) {
-        final mode = payload.split(':').last.toUpperCase();
-        message = '$mode mode not available';
-        connectionErrorMode = mode;
-      } else if (payload == 'connection_failed') {
+      if (payload == 'connection_failed') {
         message = 'Could not connect to drone. Check connection.';
-        connectionErrorMode = null;
       } else {
         message = 'Awaiting orders';
-        connectionErrorMode = null;
       }
+      connectionErrorMode = null;
 
       notifyListeners();
       return;
@@ -1099,7 +1107,7 @@ class DronProvider extends ChangeNotifier {
 
       if (currentLat != 0.0 && currentLon != 0.0) {
         droneTrail.add(LatLng(currentLat, currentLon));
-        if (droneTrail.length > 100) droneTrail.removeAt(0);
+        if (droneTrail.length > 1000) droneTrail.removeAt(0);
       }
       if (isFlying && _sessionStart != null && currentLat != 0.0) {
         _sessionLog.add(
@@ -1114,6 +1122,9 @@ class DronProvider extends ChangeNotifier {
           ),
         );
       }
+      telloWifi = (status['telloWifi'] as num?)?.toInt() ?? telloWifi;
+      telloTempC = (status['telloTempC'] as num?)?.toDouble() ?? telloTempC;
+      telloFlightTime = (status['telloFlightTime'] as num?)?.toInt() ?? telloFlightTime;
       followStatus = (status['followStatus'] as String?) ?? 'off';
       orbitStatus = (status['orbitStatus'] as String?) ?? 'off';
       final rawOrbitTof =

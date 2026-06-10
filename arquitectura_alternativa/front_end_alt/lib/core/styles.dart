@@ -7,12 +7,13 @@ class AppColors {
   //--------------COLORES----------------
   static const Color background    = Color(0xFF1E1E2E);
   static const Color surface       = Color(0xFF2A2A3E);
-  static const Color primary       = Color(0xFF4CAF50);  
-  static const Color warning       = Color(0xFFFF9800);  
-  static const Color danger        = Color(0xFFC62828);  
+  static const Color primary       = Color(0xFF4CAF50);
+  static const Color warning       = Color(0xFFFF9800);
+  static const Color danger        = Color(0xFFC62828);
   static const Color textPrimary   = Color(0xFFFFFFFF);
   static const Color textSecondary = Color(0xFFB0B0C0);
   static const Color disabled      = Color(0xFF555566);
+  static const Color border        = Color(0xFF3A3A50);
 }
 
 class TextStyles {
@@ -35,5 +36,20 @@ class TextStyles {
     fontSize: 15,
     fontWeight: FontWeight.bold,
     letterSpacing: 1.2,
+  );
+
+  static const TextStyle instrument = TextStyle(
+    color: AppColors.textPrimary,
+    fontSize: 19,
+    fontWeight: FontWeight.bold,
+    fontFeatures: [FontFeature.tabularFigures()],
+    letterSpacing: 1,
+  );
+
+  static const TextStyle instrumentLabel = TextStyle(
+    color: AppColors.textSecondary,
+    fontSize: 9,
+    letterSpacing: 1.5,
+    fontWeight: FontWeight.w600,
   );
 }

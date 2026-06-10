@@ -11,6 +11,7 @@ import 'package:provider/provider.dart';
 import '../provider.dart';
 import '../core/styles.dart';
 import '../core/js_bridges.dart';
+import '../core/telemetry_widgets.dart';
 
 // JS bridge — funciones expuestas desde index.html
 @JS()
@@ -124,7 +125,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     // _lyButton se incorpora al paquete en lugar de siempre ser 0
     context.read<DronProvider>().updateJoystick(
       lx: 0,
-      ly: _lyButton,
+      ly: _lyButton * 0.35,
       rx: rx,
       ry: ry,
     );
@@ -158,6 +159,14 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     return 0.0;
   }
 
+  // Ángulos remapeados para el horizonte artificial según el modo (SOLO visual,
+  // no afecta a las rampas ni al control). En volante el dispositivo se sostiene
+  // en horizontal: el eje adelante/atrás lo marca gamma (_roll, neutro ≈ -50°) y
+  // el lateral lo marca beta (_pitch), así que se intercambian y se compensa el
+  // neutro para que el horizonte coincida con cómo se sujeta el móvil.
+  double get _adiPitch => _mode == _ImuMode.volante ? _roll + 50.0 : _pitch;
+  double get _adiRoll => _mode == _ImuMode.volante ? _pitch : _roll;
+
   // Recentra el mapa sobre el dron si tiene posición GPS válida.
   void _centerOnDrone(double lat, double lon) {
     if (lat != 0.0 && lon != 0.0) {
@@ -170,61 +179,11 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
   // Calcula el punto final del vector de velocidad para dibujarlo en el mapa.
   LatLng _calcVelocityEndPoint(double lat, double lon, double vx, double vy) {
     final speed = sqrt(vx * vx + vy * vy);
-    if (speed < 0.3) return LatLng(lat, lon);
+    if (speed < 0.5) return LatLng(lat, lon);
     const scale = 6.0;
     final dlat = (vx * scale) / 111320;
     final dlon = (vy * scale) / (111320 * cos(lat * pi / 180));
-    return LatLng(lat + dlat, lon + dlon);
-  }
-
-  // Colores batería
-  Color _getBatteryColor(double bat) {
-    if (bat > 50) return AppColors.primary;
-    if (bat > 20) return AppColors.warning;
-    return AppColors.danger;
-  }
-
-  // Recuadro ángulos
-  Widget _buildAngleBox(
-    String label,
-    double value,
-    Color color, {
-    double fontSize = 9,
-    double valueFontSize = 11,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
-      decoration: BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: _imuActive ? color : AppColors.disabled,
-          width: _imuActive ? 1.5 : 1.0,
-        ),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: _imuActive ? color : AppColors.textSecondary,
-              fontSize: fontSize,
-              letterSpacing: 1.0,
-            ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            '${value.toStringAsFixed(1)}°',
-            style: TextStyle(
-              color: _imuActive ? color : AppColors.textSecondary,
-              fontSize: valueFontSize,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-        ],
-      ),
-    );
+    return LatLng((lat + dlat/50), (lon + dlon/50));
   }
 
   // Widget botón altitud reutilizable
@@ -239,9 +198,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
       //Gesture detector
       onLongPressStart: (_) {
         if (!isFlying) return;
-        setState(
-          () => _lyButton = up ? 1.0 : -1.0,
-        ); 
+        setState(() => _lyButton = up ? 1.0 : -1.0);
       },
       onLongPressEnd: (_) {
         setState(() => _lyButton = 0.0);
@@ -259,7 +216,9 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
       child: Container(
         padding: EdgeInsets.all(padding),
         decoration: BoxDecoration(
-          color: isFlying ? Colors.black54 : Colors.black26,
+          color: isFlying
+              ? AppColors.surface.withValues(alpha: 0.92)
+              : AppColors.background,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(
             color: isFlying
@@ -278,7 +237,58 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
-  // Flecha de velocidad creciente según magnitud y orientada según dirección de movimiento 
+  Widget _buildBottomButton({
+    required IconData icon,
+    required String label,
+    required bool enabled,
+    required VoidCallback onTap,
+    Color color = AppColors.warning,
+    bool outlined = false,
+  }) {
+    final textColor = outlined
+        ? (enabled ? color : AppColors.textSecondary)
+        : AppColors.textPrimary;
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        decoration: BoxDecoration(
+          color: outlined
+              ? (enabled ? color.withValues(alpha: 0.1) : Colors.transparent)
+              : (enabled ? color : AppColors.disabled),
+          borderRadius: BorderRadius.circular(8),
+          border: outlined
+              ? Border.all(
+                  color: enabled ? color : AppColors.disabled,
+                  width: 1.5,
+                )
+              : null,
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(icon, size: 16, color: textColor),
+            const SizedBox(width: 4),
+            Flexible(
+              child: Text(
+                label,
+                overflow: TextOverflow.ellipsis,
+                maxLines: 1,
+                style: TextStyle(
+                  color: textColor,
+                  fontWeight: FontWeight.bold,
+                  fontSize: 12,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Flecha de velocidad creciente según magnitud y orientada según dirección de movimiento
   Widget _buildVelocityArrow(double vx, double vy) {
     final speed = sqrt(vx * vx + vy * vy);
     final angle = atan2(vy, vx);
@@ -295,7 +305,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
       child: Container(
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: Colors.black54,
+          color: AppColors.surface.withValues(alpha: 0.92),
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: moving ? green : AppColors.disabled),
         ),
@@ -322,91 +332,101 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
     );
   }
 
-  // Widget reutilizable para cada celda de la barra de telemetría.
-  Widget _buildTelemetryItem(IconData icon, String label, String value) {
+  // Dos gauges lineales que muestran la zona muerta y la posición actual
+  // de los ejes de control según el modo activo (NORMAL / VOLANTE).
+  // Solo dibujan a partir de _pitch/_roll/_mode; no leen ni cambian las rampas.
+  Widget _buildGaugesColumn() {
+    // Configuración de cada gauge según el modo (refleja visualmente las
+    // zonas muertas de las funciones de rampa, sin acceder a sus constantes).
+    final List<_GaugeConfig> cfgs = _mode == _ImuMode.normal
+        ? [
+            _GaugeConfig('FWD / BACK', _pitch, -45, 55, -5, 15, Colors.cyan),
+            _GaugeConfig(
+              'LEFT / RIGHT',
+              _roll,
+              -50,
+              50,
+              -10,
+              10,
+              Colors.lightBlue,
+            ),
+            _GaugeConfig('YAW', _yaw, 0, 360, 0, 0, Colors.purpleAccent),
+          ]
+        : [
+            _GaugeConfig('FWD / BACK', _roll, -90, -10, -60, -40, Colors.cyan),
+            _GaugeConfig(
+              'LEFT / RIGHT',
+              _pitch,
+              -45,
+              45,
+              -15,
+              15,
+              Colors.lightBlue,
+            ),
+            _GaugeConfig('YAW', _yaw, 0, 360, 0, 0, Colors.purpleAccent),
+          ];
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.center,
       mainAxisSize: MainAxisSize.min,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: AppColors.primary, size: 11),
-            const SizedBox(width: 2),
-            Text(
-              label,
-              style: const TextStyle(
-                color: AppColors.textSecondary,
-                fontSize: 9,
-              ),
-            ),
-          ],
-        ),
-        Text(
-          value,
-          style: const TextStyle(
-            color: AppColors.textPrimary,
-            fontSize: 11,
-            fontWeight: FontWeight.bold,
+        for (int i = 0; i < cfgs.length; i++) ...[
+          if (i > 0) const SizedBox(height: 6),
+          _DeadZoneGauge(
+            label: cfgs[i].label,
+            value: cfgs[i].value,
+            minDeg: cfgs[i].minDeg,
+            maxDeg: cfgs[i].maxDeg,
+            deadLow: cfgs[i].deadLow,
+            deadHigh: cfgs[i].deadHigh,
+            accent: cfgs[i].accent,
+            active: _imuActive,
           ),
-        ),
+        ],
       ],
     );
   }
 
-  // Panel IMU 
+  // Panel IMU
   Widget _buildLandscapeImuPanel() {
     return Container(
+      width: 120,
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
       decoration: BoxDecoration(
-        color: Colors.black54,
+        color: AppColors.surface.withValues(alpha: 0.92),
         borderRadius: BorderRadius.circular(10),
         border: Border.all(
-          color: _imuActive ? Colors.deepPurple : AppColors.disabled,
+          color: _imuActive ? Colors.deepPurple : AppColors.border,
           width: _imuActive ? 1.5 : 1.0,
         ),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Ángulos
-          _buildAngleBox(
-            'PITCH',
-            _pitch,
-            Colors.cyan,
-            fontSize: 7,
-            valueFontSize: 10,
+          // Horizonte artificial
+          Center(
+            child: _AttitudeIndicator(
+              pitch: _adiPitch,
+              roll: _adiRoll,
+              active: _imuActive,
+              size: 72,
+            ),
           ),
-          const SizedBox(height: 4),
-          _buildAngleBox(
-            'ROLL',
-            _roll,
-            Colors.lightBlue,
-            fontSize: 7,
-            valueFontSize: 10,
-          ),
-          const SizedBox(height: 4),
-          _buildAngleBox(
-            'YAW',
-            _yaw,
-            Colors.orange,
-            fontSize: 7,
-            valueFontSize: 10,
-          ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
+          // Gauges de zona muerta (incluye YAW)
+          _buildGaugesColumn(),
+          const SizedBox(height: 10),
           // Botón START / STOP IMU
           GestureDetector(
             onTap: _imuActive ? _stopImu : _startImu,
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 150),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
               decoration: BoxDecoration(
                 color: _imuActive ? AppColors.danger : Colors.deepPurple,
                 borderRadius: BorderRadius.circular(6),
               ),
               child: Row(
-                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
                     _imuActive ? Icons.sensors_off : Icons.sensors,
@@ -426,7 +446,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 4),
+          const SizedBox(height: 6),
           // Toggle NORMAL / VOLANTE — también bloquea orientación
           GestureDetector(
             onTap: () => setState(
@@ -435,14 +455,15 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                   : _ImuMode.normal,
             ),
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
               decoration: BoxDecoration(
-                color: Colors.black45,
+                color: AppColors.background,
                 borderRadius: BorderRadius.circular(6),
                 border: Border.all(color: Colors.deepPurple),
               ),
               child: Text(
-                _mode == _ImuMode.normal ? 'NORMAL' : 'WHEEL',
+                _mode == _ImuMode.normal ? 'VERTICAL' : 'WHEEL',
+                textAlign: TextAlign.center,
                 style: const TextStyle(
                   color: Colors.deepPurple,
                   fontSize: 9,
@@ -482,95 +503,10 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
       body: SafeArea(
         child: Column(
           children: [
-            // --------- BARRA SUPERIOR DE TELEMETRÍA ------------------
-            Container(
-              color: AppColors.surface,
-              padding: EdgeInsets.symmetric(
-                horizontal: screenW * 0.015,
-                vertical: screenH * 0.006,
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  _buildTelemetryItem(
-                    Icons.height,
-                    'ALT',
-                    '${provider.currentAlt.toStringAsFixed(1)}m',
-                  ),
-                  _buildTelemetryItem(
-                    Icons.speed,
-                    'GS',
-                    '${provider.currentSpeed.toStringAsFixed(1)}m/s',
-                  ),
-                  _buildTelemetryItem(
-                    Icons.explore,
-                    'HDG',
-                    '${provider.currentHeading.toInt()}°',
-                  ),
-                  _buildTelemetryItem(
-                    Icons.location_on,
-                    'LAT',
-                    provider.currentLat.toStringAsFixed(5),
-                  ),
-                  _buildTelemetryItem(
-                    Icons.location_searching,
-                    'LON',
-                    provider.currentLon.toStringAsFixed(5),
-                  ),
-                  _buildTelemetryItem(
-                    Icons.info_outline,
-                    'STATE',
-                    provider.currentState,
-                  ),
-                  _buildTelemetryItem(
-                    Icons.airplanemode_active,
-                    'MODE',
-                    provider.currentMode,
-                  ),
-                  // Batería con color semáforo
-                  provider.isLoading
-                      ? const SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(
-                            color: AppColors.primary,
-                            strokeWidth: 2,
-                          ),
-                        )
-                      : Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(
-                                  Icons.battery_full,
-                                  color: _getBatteryColor(provider.currentBat),
-                                  size: 11,
-                                ),
-                                const SizedBox(width: 2),
-                                const Text(
-                                  'BAT',
-                                  style: TextStyle(
-                                    color: AppColors.textSecondary,
-                                    fontSize: 9,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            Text(
-                              '${provider.currentBat.toInt()}%',
-                              style: TextStyle(
-                                color: _getBatteryColor(provider.currentBat),
-                                fontSize: 11,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                ],
-              ),
-            ),
+            // --------- BARRA SUPERIOR: CHIPS DE ESTADO + BATERÍA + MENSAJE ---
+            StatusBanner(provider: provider),
+            // --------- BARRA DE TELEMETRÍA ----------------------------------
+            CompactTelemetryRow(provider: provider),
 
             // ---------- ZONA CENTRAL ----------------
             Expanded(
@@ -630,8 +566,8 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                       _calcVelocityEndPoint(
                                         provider.currentLat,
                                         provider.currentLon,
-                                        provider.currentVx / 100,
-                                        provider.currentVy / 100,
+                                        provider.currentVx,
+                                        provider.currentVy,
                                       ),
                                     ],
                                     color: const Color.fromARGB(
@@ -719,35 +655,6 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                           ],
                         ),
 
-                        // ----------- Mensaje de estado del provider ----------
-                        Positioned(
-                          top: 10,
-                          left: screenW * 0.06,
-                          right: screenW * 0.10,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 4,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.black54,
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: AppColors.disabled),
-                            ),
-                            child: Text(
-                              provider.message,
-                              textAlign: TextAlign.center,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppColors.textPrimary,
-                                fontSize: 10,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                        ),
-
                         // ----------- Botones altitud ------------
                         Positioned(
                           left: 8,
@@ -803,9 +710,11 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                         if (!isPortrait)
                           Positioned(
                             right: 8,
-                            top: 0,
-                            bottom: 0,
-                            child: Center(child: _buildLandscapeImuPanel()),
+                            top: 8,
+                            bottom: 8,
+                            child: SingleChildScrollView(
+                              child: _buildLandscapeImuPanel(),
+                            ),
                           ),
 
                         // ----------- Panel IMU abajo — solo portrait
@@ -820,12 +729,14 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                 vertical: 8,
                               ),
                               decoration: BoxDecoration(
-                                color: Colors.black54,
+                                color: AppColors.surface.withValues(
+                                  alpha: 0.92,
+                                ),
                                 borderRadius: BorderRadius.circular(10),
                                 border: Border.all(
                                   color: _imuActive
                                       ? Colors.deepPurple
-                                      : AppColors.disabled,
+                                      : AppColors.border,
                                   width: _imuActive ? 1.5 : 1.0,
                                 ),
                               ),
@@ -897,7 +808,7 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                             vertical: 3,
                                           ),
                                           decoration: BoxDecoration(
-                                            color: Colors.black45,
+                                            color: AppColors.background,
                                             borderRadius: BorderRadius.circular(
                                               6,
                                             ),
@@ -907,8 +818,8 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                           ),
                                           child: Text(
                                             _mode == _ImuMode.normal
-                                                ? '📱 NORMAL'
-                                                : '🕹️ VOLANTE',
+                                                ? 'VERTICAL'
+                                                : 'WHEEL',
                                             style: const TextStyle(
                                               color: Colors.deepPurple,
                                               fontSize: 10,
@@ -920,36 +831,16 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
                                     ],
                                   ),
                                   const SizedBox(width: 12),
-                                  // Ángulos PITCH / ROLL / YAW — siempre visibles
-                                  Expanded(
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceEvenly,
-                                      children: [
-                                        _buildAngleBox(
-                                          'PITCH',
-                                          _pitch,
-                                          Colors.cyan,
-                                          fontSize: 7,
-                                          valueFontSize: 10,
-                                        ),
-                                        _buildAngleBox(
-                                          'ROLL',
-                                          _roll,
-                                          Colors.lightBlue,
-                                          fontSize: 7,
-                                          valueFontSize: 10,
-                                        ),
-                                        _buildAngleBox(
-                                          'YAW',
-                                          _yaw,
-                                          Colors.orange,
-                                          fontSize: 7,
-                                          valueFontSize: 10,
-                                        ),
-                                      ],
-                                    ),
+                                  // Horizonte artificial
+                                  _AttitudeIndicator(
+                                    pitch: _adiPitch,
+                                    roll: _adiRoll,
+                                    active: _imuActive,
+                                    size: 64,
                                   ),
+                                  const SizedBox(width: 12),
+                                  // Gauges de zona muerta (incluye YAW)
+                                  Expanded(child: _buildGaugesColumn()),
                                 ],
                               ),
                             ),
@@ -963,163 +854,87 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
 
             // --------- BARRA INFERIOR--------------
             Container(
-              color: AppColors.surface,
+              decoration: const BoxDecoration(
+                color: AppColors.surface,
+                border: Border(top: BorderSide(color: AppColors.border)),
+              ),
               padding: EdgeInsets.symmetric(
                 horizontal: screenW * 0.01,
                 vertical: screenH * 0.005,
               ),
               child: Row(
                 children: [
-                  // ARM — deshabilitado si ya está armado, volando o cargando
                   Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.power_settings_new, size: 16),
-                      label: const Text(
-                        'ARM',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: provider.isArmed
-                            ? AppColors.danger
-                            : AppColors.warning,
-                        disabledBackgroundColor: AppColors.disabled,
-                        foregroundColor: AppColors.textPrimary,
-                        disabledForegroundColor: AppColors.textSecondary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed:
-                          provider.isLoading ||
-                              !provider.isConnected ||
-                              provider.isArmed ||
-                              provider.isFlying
-                          ? null
-                          : () => context.read<DronProvider>().armDron(),
+                    child: _buildBottomButton(
+                      icon: Icons.power_settings_new,
+                      label: 'ARM',
+                      enabled:
+                          !provider.isLoading &&
+                          provider.isConnected &&
+                          !provider.isArmed &&
+                          !provider.isFlying,
+                      color: AppColors.warning,
+                      onTap: () => context.read<DronProvider>().armDron(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  // TAKEOFF
                   Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.flight_takeoff, size: 16),
-                      label: const Text(
-                        'TAKEOFF',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.primary,
-                        disabledBackgroundColor: AppColors.disabled,
-                        foregroundColor: AppColors.textPrimary,
-                        disabledForegroundColor: AppColors.textSecondary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed:
-                          provider.isLoading ||
-                              !provider.isConnected ||
-                              !provider.isArmed ||
-                              provider.isFlying
-                          ? null
-                          : () => context.read<DronProvider>().takeOff(),
+                    child: _buildBottomButton(
+                      icon: Icons.flight_takeoff,
+                      label: 'TAKEOFF',
+                      enabled:
+                          !provider.isLoading &&
+                          provider.isConnected &&
+                          provider.isArmed &&
+                          !provider.isFlying,
+                      color: AppColors.primary,
+                      onTap: () => context.read<DronProvider>().takeOff(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  // DISCONNECT — sale de fullscreen, desconecta y vuelve al SetupScreen
                   Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.link_off, size: 16),
-                      label: const Text(
-                        'DISC',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.danger,
-                        disabledBackgroundColor: AppColors.danger,
-                        foregroundColor: AppColors.textPrimary,
-                        disabledForegroundColor: AppColors.textSecondary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed:
-                          provider.isLoading ||
-                              !provider.isConnected ||
-                              provider.isArmed ||
-                              provider.isFlying
-                          ? null
-                          : () {
-                              context.read<DronProvider>().disconnectDron();
-                              exitFullscreenEZ();
-                              Navigator.pop(context);
-                            },
+                    child: _buildBottomButton(
+                      icon: Icons.link_off,
+                      label: 'DISC',
+                      enabled:
+                          !provider.isLoading &&
+                          provider.isConnected &&
+                          !provider.isArmed &&
+                          !provider.isFlying,
+                      color: AppColors.danger,
+                      outlined: true,
+                      onTap: () {
+                        context.read<DronProvider>().disconnectDron();
+                        exitFullscreenEZ();
+                        Navigator.pop(context);
+                      },
                     ),
                   ),
-
-                  //LAND
                   Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.flight_land, size: 16),
-                      label: const Text(
-                        'LAND',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.warning,
-                        disabledBackgroundColor: AppColors.disabled,
-                        foregroundColor: AppColors.textPrimary,
-                        disabledForegroundColor: AppColors.textSecondary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed:
-                          provider.isLoading ||
-                              !provider.isConnected ||
-                              !provider.isFlying
-                          ? null
-                          : () => context.read<DronProvider>().land(),
+                    child: _buildBottomButton(
+                      icon: Icons.flight_land,
+                      label: 'LAND',
+                      enabled:
+                          !provider.isLoading &&
+                          provider.isConnected &&
+                          provider.isFlying,
+                      color: AppColors.warning,
+                      onTap: () => context.read<DronProvider>().land(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
-
-                  //RTL
                   Expanded(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.home, size: 16),
-                      label: const Text(
-                        'RTL',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppColors.warning,
-                        disabledBackgroundColor: AppColors.disabled,
-                        foregroundColor: AppColors.textPrimary,
-                        disabledForegroundColor: AppColors.textSecondary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed:
-                          provider.isLoading ||
-                              !provider.isConnected ||
-                              !provider.isFlying
-                          ? null
-                          : () => context.read<DronProvider>().rtl(),
+                    child: _buildBottomButton(
+                      icon: Icons.home,
+                      label: 'RTL',
+                      enabled:
+                          !provider.isLoading &&
+                          provider.isConnected &&
+                          provider.isFlying,
+                      color: AppColors.warning,
+                      onTap: () => context.read<DronProvider>().rtl(),
                     ),
                   ),
-
                   SizedBox(width: screenW * 0.01),
                 ],
               ),
@@ -1129,4 +944,302 @@ class _ImuFlightScreenState extends State<ImuFlightScreen> {
       ),
     );
   }
+}
+
+// Configuración de un gauge de zona muerta (visual, derivada del modo activo).
+class _GaugeConfig {
+  final String label;
+  final double value;
+  final double minDeg;
+  final double maxDeg;
+  final double deadLow;
+  final double deadHigh;
+  final Color accent;
+  const _GaugeConfig(
+    this.label,
+    this.value,
+    this.minDeg,
+    this.maxDeg,
+    this.deadLow,
+    this.deadHigh,
+    this.accent,
+  );
+}
+
+// ── Horizonte artificial ──────────────────────────────────────────────────────
+// Indicador de actitud tipo cabina: el horizonte se inclina con el roll (gamma)
+// y sube/baja con el pitch (beta). La silueta central del avión queda fija.
+class _AttitudeIndicator extends StatelessWidget {
+  final double pitch; // beta
+  final double roll; // gamma
+  final bool active;
+  final double size;
+
+  const _AttitudeIndicator({
+    required this.pitch,
+    required this.roll,
+    required this.active,
+    this.size = 84,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final Color ring = active ? Colors.cyan : AppColors.disabled;
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(color: ring, width: 1.5),
+        boxShadow: active
+            ? [
+                BoxShadow(
+                  color: Colors.cyan.withValues(alpha: 0.25),
+                  blurRadius: 10,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: ClipOval(
+        child: CustomPaint(
+          painter: _AttitudePainter(pitch: pitch, roll: roll, active: active),
+          size: Size(size, size),
+        ),
+      ),
+    );
+  }
+}
+
+class _AttitudePainter extends CustomPainter {
+  final double pitch;
+  final double roll;
+  final bool active;
+
+  _AttitudePainter({
+    required this.pitch,
+    required this.roll,
+    required this.active,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final r = size.width / 2;
+    final pxPerDeg = size.height / 90.0;
+    final dy = pitch.clamp(-45.0, 45.0) * pxPerDeg;
+
+    final Color skyColor = active
+        ? const Color(0xFF2C4A6E)
+        : const Color(0xFF33384A);
+    final Color groundColor = active
+        ? const Color(0xFF5A3D26)
+        : const Color(0xFF24242F);
+
+    canvas.save();
+    canvas.translate(center.dx, center.dy);
+    canvas.rotate(-roll * pi / 180.0);
+
+    final big = r * 3;
+    // Cielo (arriba del horizonte) y tierra (abajo)
+    canvas.drawRect(
+      Rect.fromLTRB(-big, -big, big, dy),
+      Paint()..color = skyColor,
+    );
+    canvas.drawRect(
+      Rect.fromLTRB(-big, dy, big, big),
+      Paint()..color = groundColor,
+    );
+    // Línea de horizonte
+    canvas.drawLine(
+      Offset(-big, dy),
+      Offset(big, dy),
+      Paint()
+        ..color = Colors.white
+        ..strokeWidth = 1.5,
+    );
+    // Escala de pitch (rungs) ±10° y ±20°
+    final rung = Paint()
+      ..color = Colors.white70
+      ..strokeWidth = 1;
+    for (final deg in [10, 20]) {
+      final half = deg == 10 ? r * 0.18 : r * 0.30;
+      final yUp = dy - deg * pxPerDeg;
+      final yDn = dy + deg * pxPerDeg;
+      canvas.drawLine(Offset(-half, yUp), Offset(half, yUp), rung);
+      canvas.drawLine(Offset(-half, yDn), Offset(half, yDn), rung);
+    }
+    canvas.restore();
+
+    // Silueta fija del avión (no rota)
+    final ac = Paint()
+      ..color = active ? AppColors.warning : AppColors.disabled
+      ..strokeWidth = 2.5
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(
+      center + Offset(-r * 0.42, 0),
+      center + Offset(-r * 0.12, 0),
+      ac,
+    );
+    canvas.drawLine(
+      center + Offset(r * 0.12, 0),
+      center + Offset(r * 0.42, 0),
+      ac,
+    );
+    canvas.drawCircle(center, 2.5, ac);
+  }
+
+  @override
+  bool shouldRepaint(_AttitudePainter old) =>
+      old.pitch != pitch || old.roll != roll || old.active != active;
+}
+
+// ── Gauge de zona muerta ──────────────────────────────────────────────────────
+// Barra horizontal que muestra: banda central = zona muerta, marcador = posición
+// actual del eje, y relleno coloreado = magnitud de salida cuando está fuera de
+// la zona muerta. Es puramente informativo (no altera las rampas reales).
+class _DeadZoneGauge extends StatelessWidget {
+  final String label;
+  final double value;
+  final double minDeg;
+  final double maxDeg;
+  final double deadLow;
+  final double deadHigh;
+  final Color accent;
+  final bool active;
+
+  const _DeadZoneGauge({
+    required this.label,
+    required this.value,
+    required this.minDeg,
+    required this.maxDeg,
+    required this.deadLow,
+    required this.deadHigh,
+    required this.accent,
+    required this.active,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: TextStyle(
+            color: active ? accent : AppColors.textSecondary,
+            fontSize: 7,
+            letterSpacing: 1.0,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        const SizedBox(height: 2),
+        SizedBox(
+          height: 12,
+          width: double.infinity,
+          child: CustomPaint(
+            painter: _DeadZonePainter(
+              value: value,
+              minDeg: minDeg,
+              maxDeg: maxDeg,
+              deadLow: deadLow,
+              deadHigh: deadHigh,
+              accent: accent,
+              active: active,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DeadZonePainter extends CustomPainter {
+  final double value;
+  final double minDeg;
+  final double maxDeg;
+  final double deadLow;
+  final double deadHigh;
+  final Color accent;
+  final bool active;
+
+  _DeadZonePainter({
+    required this.value,
+    required this.minDeg,
+    required this.maxDeg,
+    required this.deadLow,
+    required this.deadHigh,
+    required this.accent,
+    required this.active,
+  });
+
+  double _map(double v, double width) {
+    final t = ((v - minDeg) / (maxDeg - minDeg)).clamp(0.0, 1.0);
+    return t * width;
+  }
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final radius = const Radius.circular(4);
+    final fullRect = Offset.zero & size;
+
+    // Track de fondo
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(fullRect, radius),
+      Paint()..color = AppColors.background,
+    );
+
+    canvas.save();
+    canvas.clipRRect(RRect.fromRectAndRadius(fullRect, radius));
+
+    // Banda de zona muerta
+    final dzL = _map(deadLow, size.width);
+    final dzR = _map(deadHigh, size.width);
+    canvas.drawRect(
+      Rect.fromLTRB(dzL, 0, dzR, size.height),
+      Paint()
+        ..color = AppColors.disabled.withValues(alpha: active ? 0.55 : 0.3),
+    );
+
+    // Relleno de salida (magnitud fuera de la zona muerta)
+    final v = value.clamp(minDeg, maxDeg);
+    if (active && (v > deadHigh || v < deadLow)) {
+      final from = v > deadHigh ? dzR : _map(v, size.width);
+      final to = v > deadHigh ? _map(v, size.width) : dzL;
+      canvas.drawRect(
+        Rect.fromLTRB(from, 0, to, size.height),
+        Paint()..color = accent.withValues(alpha: 0.5),
+      );
+    }
+
+    // Marcador de posición actual
+    final mx = _map(v, size.width);
+    canvas.drawLine(
+      Offset(mx, -1),
+      Offset(mx, size.height + 1),
+      Paint()
+        ..color = active ? accent : AppColors.textSecondary
+        ..strokeWidth = 2,
+    );
+    canvas.restore();
+
+    // Borde
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(fullRect, radius),
+      Paint()
+        ..style = PaintingStyle.stroke
+        ..color = AppColors.border
+        ..strokeWidth = 1,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_DeadZonePainter old) =>
+      old.value != value ||
+      old.active != active ||
+      old.deadLow != deadLow ||
+      old.deadHigh != deadHigh ||
+      old.minDeg != minDeg ||
+      old.maxDeg != maxDeg;
 }

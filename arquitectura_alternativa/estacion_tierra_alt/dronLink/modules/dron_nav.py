@@ -92,7 +92,10 @@ def changeNavSpeed (self, speed):
     applyGo=False
     self.navSpeed = speed
     newParameters = [{'ID': "WPNAV_SPEED", 'Value': speed*100},
-                     {'ID': "LOIT_SPEED_MS", 'Value': speed}]
+                     {'ID': "LOIT_SPEED_MS", 'Value': speed},
+                     {'ID': "PILOT_SPEED_UP", 'Value': speed*100},
+                     {'ID': "PILOT_SPEED_DN", 'Value': speed*100},
+                     {'ID': "PILOT_Y_RATE", 'Value': speed*10}]
     self.setParams(newParameters)
     if self.verbose:
         logging.info("Nueva velocidad de navegación: %s", str(speed))

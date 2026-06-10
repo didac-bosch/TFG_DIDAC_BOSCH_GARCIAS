@@ -100,22 +100,25 @@ def _send(self, cmd: str, timeout: float = None) -> str:
         self._tello.RESPONSE_TIMEOUT = 20
 
     try:
-        # djitelopy expone distintos nombres según la versión
-        if hasattr(self._tello, "send_read_command"):
-            resp = self._tello.send_read_command(cmd)
-            return str(resp)
+        # Serializar el acceso al socket de comandos (djitellopy no es thread-safe
+        # para comandos con respuesta). Cubre moves, up/down, speed, takeoff y land.
+        with self._sdk_lock:
+            # djitelopy expone distintos nombres según la versión
+            if hasattr(self._tello, "send_read_command"):
+                resp = self._tello.send_read_command(cmd)
+                return str(resp)
 
-        if hasattr(self._tello, "send_command_with_return"):
-            resp = self._tello.send_command_with_return(cmd)
-            return str(resp)
+            if hasattr(self._tello, "send_command_with_return"):
+                resp = self._tello.send_command_with_return(cmd)
+                return str(resp)
 
-        if hasattr(self._tello, "send_control_command"):
-            res = self._tello.send_control_command(cmd)
-            if isinstance(res, bool):
-                return "ok" if res else "error"
-            return str(res)
+            if hasattr(self._tello, "send_control_command"):
+                res = self._tello.send_control_command(cmd)
+                if isinstance(res, bool):
+                    return "ok" if res else "error"
+                return str(res)
 
-        raise RuntimeError("El backend Tello no soporta envío textual en la versión actual.")
+            raise RuntimeError("El backend Tello no soporta envío textual en la versión actual.")
     finally:
         # Restaurar timeout original
         self._tello.RESPONSE_TIMEOUT = original_timeout

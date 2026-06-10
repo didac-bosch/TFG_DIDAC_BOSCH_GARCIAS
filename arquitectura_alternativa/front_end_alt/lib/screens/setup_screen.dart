@@ -18,12 +18,11 @@ class SetupScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
 
-    // Mostrar error de conexión si se ha producido
     if (provider.connectionErrorMode != null) {
       final mode = provider.connectionErrorMode!;
       provider.clearConnectionError();
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!context.mounted) return; // guard de safety
+        if (!context.mounted) return;
         showDialog(
           context: context,
           builder: (_) => AlertDialog(
@@ -61,6 +60,7 @@ class SetupScreen extends StatelessWidget {
         );
       });
     }
+
     final mq = MediaQuery.of(context);
     final screenW = mq.size.width;
     final screenH = mq.size.height + mq.viewInsets.bottom;
@@ -76,6 +76,10 @@ class SetupScreen extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
         toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(color: const Color(0xFF3A3A50)),
+        ),
         actions: [
           IconButton(
             onPressed: () => Navigator.push(
@@ -167,54 +171,26 @@ class SetupScreen extends StatelessWidget {
     double screenW,
     double screenH,
   ) {
+    final pad = screenW * 0.05;
     return SingleChildScrollView(
       keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-      padding: EdgeInsets.symmetric(vertical: screenH * 0.02),
+      padding: EdgeInsets.symmetric(horizontal: pad, vertical: screenH * 0.02),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          SizedBox(height: screenH * 0.03),
-          FaIcon(
-            FontAwesomeIcons.helicopterSymbol,
-            size: screenW * 0.2,
-            color: provider.isConnected
-                ? AppColors.primary
-                : AppColors.textSecondary,
-          ),
-          SizedBox(height: screenH * 0.025),
-          _StatusBox(screenW: screenW, screenH: screenH, provider: provider),
-          SizedBox(height: screenH * 0.01),
-          if (provider.isLoading)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 6),
-              child: CircularProgressIndicator(color: AppColors.primary),
-            ),
-          SizedBox(height: screenH * 0.03),
-          _ConfigFields(screenW: screenW),
-          SizedBox(height: screenH * 0.025),
-          // Selector modo de conexión (ArduPilot / SITL)
-          _DroneConnectionModeSelector(screenW: screenW, provider: provider),
-          SizedBox(height: screenH * 0.025),
-          // Selector modo de control (Classic / Voice / IMU)
-          _ModeSelector(screenW: screenW, provider: provider),
-          SizedBox(height: screenH * 0.04),
-          _ConnectButton(
-            screenW: screenW,
-            screenH: screenH,
-            provider: provider,
-          ),
           SizedBox(height: screenH * 0.015),
-          _StartFlightButton(
-            screenW: screenW,
-            screenH: screenH,
-            provider: provider,
-          ),
+          _HeroSection(screenW: screenW, screenH: screenH, provider: provider),
+          SizedBox(height: screenH * 0.02),
+          _SectionCard(child: _DroneConnectionModeSelector(provider: provider)),
           SizedBox(height: screenH * 0.015),
-          _DisconnectButton(
-            screenW: screenW,
-            screenH: screenH,
-            provider: provider,
-          ),
+          _SectionCard(child: _ModeSelector(provider: provider)),
+          SizedBox(height: screenH * 0.015),
+          _SectionCard(child: _ConfigFields(screenW: screenW - pad * 2)),
+          SizedBox(height: screenH * 0.03),
+          _ConnectButton(screenH: screenH, provider: provider),
+          SizedBox(height: screenH * 0.013),
+          _StartFlightButton(screenH: screenH, provider: provider),
+          SizedBox(height: screenH * 0.013),
+          _DisconnectButton(screenH: screenH, provider: provider),
           SizedBox(height: screenH * 0.02),
         ],
       ),
@@ -238,34 +214,18 @@ class SetupScreen extends StatelessWidget {
           Expanded(
             flex: 4,
             child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                FaIcon(
-                  FontAwesomeIcons.helicopterSymbol,
-                  size: screenH * 0.18,
-                  color: provider.isConnected
-                      ? AppColors.primary
-                      : AppColors.textSecondary,
-                ),
-                SizedBox(height: screenH * 0.025),
-                _StatusBox(
-                  screenW: screenW * 0.45,
+                _HeroSection(
+                  screenW: screenW * 0.4,
                   screenH: screenH,
                   provider: provider,
                 ),
-                SizedBox(height: screenH * 0.02),
-                if (provider.isLoading)
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 4),
-                    child: CircularProgressIndicator(color: AppColors.primary),
-                  ),
-                SizedBox(height: screenH * 0.02),
-                _DroneConnectionModeSelector(
-                  screenW: screenW * 0.45,
-                  provider: provider,
+                SizedBox(height: screenH * 0.025),
+                _SectionCard(
+                  child: _DroneConnectionModeSelector(provider: provider),
                 ),
                 SizedBox(height: screenH * 0.02),
-                _ModeSelector(screenW: screenW * 0.45, provider: provider),
+                _SectionCard(child: _ModeSelector(provider: provider)),
               ],
             ),
           ),
@@ -275,25 +235,13 @@ class SetupScreen extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _ConfigFields(screenW: screenW * 0.5),
-                SizedBox(height: screenH * 0.04),
-                _ConnectButton(
-                  screenW: screenW * 0.5,
-                  screenH: screenH,
-                  provider: provider,
-                ),
+                _SectionCard(child: _ConfigFields(screenW: screenW * 0.5)),
+                SizedBox(height: screenH * 0.035),
+                _ConnectButton(screenH: screenH, provider: provider),
                 SizedBox(height: screenH * 0.02),
-                _StartFlightButton(
-                  screenW: screenW * 0.5,
-                  screenH: screenH,
-                  provider: provider,
-                ),
+                _StartFlightButton(screenH: screenH, provider: provider),
                 SizedBox(height: screenH * 0.02),
-                _DisconnectButton(
-                  screenW: screenW * 0.5,
-                  screenH: screenH,
-                  provider: provider,
-                ),
+                _DisconnectButton(screenH: screenH, provider: provider),
               ],
             ),
           ),
@@ -303,100 +251,218 @@ class SetupScreen extends StatelessWidget {
   }
 }
 
-// ── Selector modo de CONEXIÓN (ArduPilot / SITL) ─────────────────────────────
-// Bloqueado visualmente cuando isConnected == true.
-class _DroneConnectionModeSelector extends StatelessWidget {
+// ── Section Card ──────────────────────────────────────────────────────────────
+
+class _SectionCard extends StatelessWidget {
+  final Widget child;
+  const _SectionCard({required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFF3A3A50)),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: child,
+    );
+  }
+}
+
+// ── Hero Section ──────────────────────────────────────────────────────────────
+
+class _HeroSection extends StatelessWidget {
   final double screenW;
+  final double screenH;
   final DronProvider provider;
 
-  const _DroneConnectionModeSelector({
+  const _HeroSection({
     required this.screenW,
+    required this.screenH,
     required this.provider,
   });
 
   @override
   Widget build(BuildContext context) {
-    final bool locked = provider.isConnected;
+    final Color dotColor = provider.isLoading
+        ? AppColors.warning
+        : provider.isConnected
+        ? AppColors.primary
+        : AppColors.disabled;
 
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
+    final double iconSize = (screenW * 0.15).clamp(44.0, 80.0);
+
+    return Container(
+      width: double.infinity,
+      padding: EdgeInsets.symmetric(vertical: screenH * 0.025, horizontal: 20),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF3A3A50)),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 250),
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: provider.isConnected
+                  ? AppColors.primary.withValues(alpha: 0.1)
+                  : AppColors.background,
+              border: Border.all(
+                color: provider.isConnected
+                    ? AppColors.primary
+                    : AppColors.disabled,
+                width: provider.isConnected ? 2.0 : 1.0,
+              ),
+            ),
+            child: FaIcon(
+              FontAwesomeIcons.helicopterSymbol,
+              size: iconSize,
+              color: provider.isConnected
+                  ? AppColors.primary
+                  : AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 14),
+          const Text(
+            'EZDRONE',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 26,
+              fontWeight: FontWeight.bold,
+              letterSpacing: 4,
+            ),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'Ground Control Station',
+            style: TextStyle(
+              color: AppColors.textSecondary,
+              fontSize: 10,
+              letterSpacing: 2.5,
+            ),
+          ),
+          const SizedBox(height: 16),
           Row(
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                'DRONE MODE',
-                style: TextStyle(
-                  color: AppColors.textSecondary,
-                  fontSize: 11,
-                  letterSpacing: 1.2,
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 300),
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: dotColor,
                 ),
               ),
-              if (locked) ...[
-                const SizedBox(width: 6),
-                const Icon(
-                  Icons.lock,
-                  size: 11,
-                  color: AppColors.textSecondary,
-                ),
-                const SizedBox(width: 3),
-                const Text(
-                  'disconnect to change',
-                  style: TextStyle(
-                    color: AppColors.textSecondary,
-                    fontSize: 9,
-                    fontStyle: FontStyle.italic,
-                  ),
-                ),
-              ],
+              const SizedBox(width: 8),
+              Text(
+                provider.message,
+                textAlign: TextAlign.center,
+                style: TextStyles.status,
+              ),
             ],
-          ),
-          const SizedBox(height: 10),
-          Opacity(
-            opacity: locked ? 0.45 : 1.0,
-            child: Wrap(
-              spacing: screenW * 0.03,
-              runSpacing: 8,
-              children: [
-                _ConnectionChip(
-                  label: 'ArduPilot',
-                  icon: Icons.developer_board,
-                  color: AppColors.primary,
-                  mode: DroneConnectionMode.ardupilot,
-                  selected: provider.droneConnectionMode,
-                  enabled: !locked,
-                  onTap: () => context
-                      .read<DronProvider>()
-                      .setDroneConnectionMode(DroneConnectionMode.ardupilot),
-                ),
-                _ConnectionChip(
-                  label: 'SITL',
-                  icon: Icons.computer,
-                  color: Colors.orange,
-                  mode: DroneConnectionMode.sitl,
-                  selected: provider.droneConnectionMode,
-                  enabled: !locked,
-                  onTap: () => context
-                      .read<DronProvider>()
-                      .setDroneConnectionMode(DroneConnectionMode.sitl),
-                ),
-                _ConnectionChip(
-                  label: 'Tello',
-                  icon: Icons.flight,
-                  color: Colors.lightBlue,
-                  mode: DroneConnectionMode.tello,
-                  selected: provider.droneConnectionMode,
-                  enabled: !locked,
-                  onTap: () => context
-                      .read<DronProvider>()
-                      .setDroneConnectionMode(DroneConnectionMode.tello),
-                ),
-              ],
-            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Drone Connection Mode Selector ────────────────────────────────────────────
+
+class _DroneConnectionModeSelector extends StatelessWidget {
+  final DronProvider provider;
+
+  const _DroneConnectionModeSelector({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool locked = provider.isConnected;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.developer_board,
+              size: 14,
+              color: AppColors.textSecondary,
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              'DRONE MODE',
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+                letterSpacing: 1.2,
+              ),
+            ),
+            if (locked) ...[
+              const SizedBox(width: 6),
+              const Icon(Icons.lock, size: 11, color: AppColors.textSecondary),
+              const SizedBox(width: 3),
+              const Text(
+                'disconnect to change',
+                style: TextStyle(
+                  color: AppColors.textSecondary,
+                  fontSize: 9,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 12),
+        Opacity(
+          opacity: locked ? 0.45 : 1.0,
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _ConnectionChip(
+                label: 'ArduPilot',
+                icon: Icons.developer_board,
+                color: AppColors.primary,
+                mode: DroneConnectionMode.ardupilot,
+                selected: provider.droneConnectionMode,
+                enabled: !locked,
+                onTap: () => context
+                    .read<DronProvider>()
+                    .setDroneConnectionMode(DroneConnectionMode.ardupilot),
+              ),
+              _ConnectionChip(
+                label: 'SITL',
+                icon: Icons.computer,
+                color: Colors.orange,
+                mode: DroneConnectionMode.sitl,
+                selected: provider.droneConnectionMode,
+                enabled: !locked,
+                onTap: () => context
+                    .read<DronProvider>()
+                    .setDroneConnectionMode(DroneConnectionMode.sitl),
+              ),
+              _ConnectionChip(
+                label: 'Tello',
+                icon: Icons.flight,
+                color: Colors.lightBlue,
+                mode: DroneConnectionMode.tello,
+                selected: provider.droneConnectionMode,
+                enabled: !locked,
+                onTap: () => context
+                    .read<DronProvider>()
+                    .setDroneConnectionMode(DroneConnectionMode.tello),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }
@@ -427,13 +493,15 @@ class _ConnectionChip extends StatelessWidget {
       onTap: enabled ? onTap : null,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(10),
+          color: isSelected
+              ? color.withValues(alpha: 0.12)
+              : AppColors.background,
+          borderRadius: BorderRadius.circular(20),
           border: Border.all(
             color: isSelected ? color : AppColors.disabled,
-            width: isSelected ? 2.0 : 1.0,
+            width: isSelected ? 1.5 : 1.0,
           ),
         ),
         child: Row(
@@ -441,16 +509,14 @@ class _ConnectionChip extends StatelessWidget {
           children: [
             Icon(
               icon,
-              size: 16,
+              size: 15,
               color: isSelected ? color : AppColors.textSecondary,
             ),
-            const SizedBox(width: 6),
+            const SizedBox(width: 7),
             Text(
               label,
               style: TextStyle(
-                color: isSelected
-                    ? AppColors.textPrimary
-                    : AppColors.textSecondary,
+                color: isSelected ? color : AppColors.textSecondary,
                 fontSize: 13,
                 fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
               ),
@@ -462,44 +528,140 @@ class _ConnectionChip extends StatelessWidget {
   }
 }
 
-// ── Status box ────────────────────────────────────────────────────────────────
-class _StatusBox extends StatelessWidget {
-  final double screenW;
-  final double screenH;
+// ── Control Mode Selector ─────────────────────────────────────────────────────
+
+class _ModeSelector extends StatelessWidget {
   final DronProvider provider;
 
-  const _StatusBox({
-    required this.screenW,
-    required this.screenH,
-    required this.provider,
+  const _ModeSelector({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool isTello =
+        provider.droneConnectionMode == DroneConnectionMode.tello;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Icon(Icons.tune, size: 14, color: AppColors.textSecondary),
+            SizedBox(width: 6),
+            Text(
+              'CONTROL MODE',
+              style: TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 11,
+                letterSpacing: 1.2,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            _ModeChip(
+              label: 'Classic',
+              icon: Icons.sports_esports,
+              color: AppColors.primary,
+              mode: ControlMode.classic,
+              selected: provider.selectedMode,
+              onTap: () => context.read<DronProvider>().setControlMode(
+                ControlMode.classic,
+              ),
+            ),
+            if (!isTello) ...[
+              _ModeChip(
+                label: 'Voice',
+                icon: Icons.mic,
+                color: Colors.teal,
+                mode: ControlMode.voice,
+                selected: provider.selectedMode,
+                onTap: () => context.read<DronProvider>().setControlMode(
+                  ControlMode.voice,
+                ),
+              ),
+              _ModeChip(
+                label: 'IMU',
+                icon: Icons.sensors,
+                color: Colors.deepPurple,
+                mode: ControlMode.imu,
+                selected: provider.selectedMode,
+                onTap: () => context.read<DronProvider>().setControlMode(
+                  ControlMode.imu,
+                ),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+class _ModeChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final ControlMode mode;
+  final ControlMode selected;
+  final VoidCallback onTap;
+
+  const _ModeChip({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.mode,
+    required this.selected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
-      child: Container(
-        width: double.infinity,
-        padding: EdgeInsets.symmetric(
-          horizontal: screenW * 0.04,
-          vertical: screenH * 0.015,
-        ),
+    final bool isSelected = mode == selected;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
         decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: AppColors.disabled),
+          color: isSelected
+              ? color.withValues(alpha: 0.12)
+              : AppColors.background,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? color : AppColors.disabled,
+            width: isSelected ? 1.5 : 1.0,
+          ),
         ),
-        child: Text(
-          provider.message,
-          textAlign: TextAlign.center,
-          style: TextStyles.status,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? color : AppColors.textSecondary,
+            ),
+            const SizedBox(width: 7),
+            Text(
+              label,
+              style: TextStyle(
+                color: isSelected ? color : AppColors.textSecondary,
+                fontSize: 13,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 }
 
-// ── Config fields (altitud / velocidad) ───────────────────────────────────────
+// ── Config Fields ─────────────────────────────────────────────────────────────
+
 class _ConfigFields extends StatefulWidget {
   final double screenW;
   const _ConfigFields({required this.screenW});
@@ -545,261 +707,226 @@ class _ConfigFieldsState extends State<_ConfigFields> {
         context.watch<DronProvider>().droneConnectionMode ==
         DroneConnectionMode.tello;
 
-    if (isTello) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-        child: Text(
-          'Tello takeoff altitude is fixed (~50 cm)',
-          textAlign: TextAlign.center,
+    const header = Row(
+      children: [
+        Icon(Icons.tune_rounded, size: 14, color: AppColors.textSecondary),
+        SizedBox(width: 6),
+        Text(
+          'FLIGHT PARAMETERS',
           style: TextStyle(
             color: AppColors.textSecondary,
-            fontSize: 12,
-            fontStyle: FontStyle.italic,
+            fontSize: 11,
+            letterSpacing: 1.2,
           ),
         ),
-      );
-    }
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: widget.screenW * 0.05),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-        children: [
-          SizedBox(
-            width: widget.screenW * 0.35,
-            child: TextFormField(
-              controller: _altCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Alt (m)',
-                helperText: '2.0 - 50.0',
-                helperStyle: TextStyle(
-                  color: _altValid ? AppColors.textSecondary : AppColors.danger,
-                  fontSize: 10,
-                ),
-                labelStyle: const TextStyle(color: AppColors.textSecondary),
-                enabledBorder: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: AppColors.textSecondary),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(
-                    color: _altValid ? AppColors.primary : AppColors.danger,
-                  ),
-                ),
-              ),
-              onChanged: (v) {
-                setState(() => _altValid = _checkAlt(v));
-                context.read<DronProvider>().setAltitude(v);
-              },
-            ),
-          ),
-          SizedBox(
-            width: widget.screenW * 0.35,
-            child: TextFormField(
-              controller: _speedCtrl,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              style: const TextStyle(color: AppColors.textPrimary),
-              decoration: InputDecoration(
-                labelText: 'Speed (m/s)',
-                helperText: '1.0 - 15.0',
-                helperStyle: TextStyle(
-                  color: _speedValid
-                      ? AppColors.textSecondary
-                      : AppColors.danger,
-                  fontSize: 10,
-                ),
-                labelStyle: const TextStyle(color: AppColors.textSecondary),
-                enabledBorder: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: AppColors.textSecondary),
-                ),
-                focusedBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(
-                    color: _speedValid ? AppColors.primary : AppColors.danger,
-                  ),
-                ),
-              ),
-              onChanged: (v) {
-                setState(() => _speedValid = _checkSpeed(v));
-                context.read<DronProvider>().setSpeed(v);
-              },
-            ),
-          ),
-        ],
-      ),
+      ],
     );
-  }
-}
 
-// ── Selector modo de CONTROL (Classic / Voice / IMU) ─────────────────────────
-class _ModeSelector extends StatelessWidget {
-  final double screenW;
-  final DronProvider provider;
-
-  const _ModeSelector({required this.screenW, required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isTello =
-        provider.droneConnectionMode == DroneConnectionMode.tello;
-
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
-      child: Column(
+    if (isTello) {
+      return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'CONTROL MODE',
+        children: const [
+          header,
+          SizedBox(height: 12),
+          Text(
+            'Tello takeoff altitude is fixed (~50 cm)',
             style: TextStyle(
               color: AppColors.textSecondary,
-              fontSize: 11,
-              letterSpacing: 1.2,
+              fontSize: 12,
+              fontStyle: FontStyle.italic,
             ),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: screenW * 0.03,
-            runSpacing: 8,
-            children: [
-              _ModeChip(
-                label: 'Classic',
-                icon: Icons.sports_esports,
-                color: AppColors.primary,
-                mode: ControlMode.classic,
-                selected: provider.selectedMode,
-                onTap: () => context.read<DronProvider>().setControlMode(
-                  ControlMode.classic,
-                ),
-              ),
-              if (!isTello) ...[
-                _ModeChip(
-                  label: 'Voice',
-                  icon: Icons.mic,
-                  color: Colors.teal,
-                  mode: ControlMode.voice,
-                  selected: provider.selectedMode,
-                  onTap: () => context.read<DronProvider>().setControlMode(
-                    ControlMode.voice,
-                  ),
-                ),
-                _ModeChip(
-                  label: 'IMU',
-                  icon: Icons.sensors,
-                  color: Colors.deepPurple,
-                  mode: ControlMode.imu,
-                  selected: provider.selectedMode,
-                  onTap: () => context.read<DronProvider>().setControlMode(
-                    ControlMode.imu,
-                  ),
-                ),
-              ],
-            ],
           ),
         ],
-      ),
-    );
-  }
-}
+      );
+    }
 
-class _ModeChip extends StatelessWidget {
-  final String label;
-  final IconData icon;
-  final Color color;
-  final ControlMode mode;
-  final ControlMode selected;
-  final VoidCallback onTap;
-
-  const _ModeChip({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.mode,
-    required this.selected,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final bool isSelected = mode == selected;
-    return GestureDetector(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: AppColors.surface,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: isSelected ? color : AppColors.disabled,
-            width: isSelected ? 2.0 : 1.0,
-          ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        header,
+        const SizedBox(height: 14),
+        Row(
           children: [
-            Icon(
-              icon,
-              size: 16,
-              color: isSelected ? color : AppColors.textSecondary,
+            Expanded(
+              child: TextFormField(
+                controller: _altCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppColors.background,
+                  labelText: 'Alt (m)',
+                  helperText: '2.0 – 50.0',
+                  helperStyle: TextStyle(
+                    color: _altValid
+                        ? AppColors.textSecondary
+                        : AppColors.danger,
+                    fontSize: 10,
+                  ),
+                  labelStyle: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                  prefixIcon: Icon(
+                    Icons.height,
+                    color: _altValid
+                        ? AppColors.textSecondary
+                        : AppColors.danger,
+                    size: 18,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: _altValid ? AppColors.disabled : AppColors.danger,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: _altValid ? AppColors.primary : AppColors.danger,
+                    ),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onChanged: (v) {
+                  setState(() => _altValid = _checkAlt(v));
+                  context.read<DronProvider>().setAltitude(v);
+                },
+              ),
             ),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: isSelected
-                    ? AppColors.textPrimary
-                    : AppColors.textSecondary,
-                fontSize: 13,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextFormField(
+                controller: _speedCtrl,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                style: const TextStyle(color: AppColors.textPrimary),
+                decoration: InputDecoration(
+                  filled: true,
+                  fillColor: AppColors.background,
+                  labelText: 'Speed (m/s)',
+                  helperText: '1.0 – 15.0',
+                  helperStyle: TextStyle(
+                    color: _speedValid
+                        ? AppColors.textSecondary
+                        : AppColors.danger,
+                    fontSize: 10,
+                  ),
+                  labelStyle: const TextStyle(
+                    color: AppColors.textSecondary,
+                    fontSize: 13,
+                  ),
+                  prefixIcon: Icon(
+                    Icons.speed,
+                    color: _speedValid
+                        ? AppColors.textSecondary
+                        : AppColors.danger,
+                    size: 18,
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 10,
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: _speedValid
+                          ? AppColors.disabled
+                          : AppColors.danger,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(
+                      color: _speedValid ? AppColors.primary : AppColors.danger,
+                    ),
+                  ),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+                onChanged: (v) {
+                  setState(() => _speedValid = _checkSpeed(v));
+                  context.read<DronProvider>().setSpeed(v);
+                },
               ),
             ),
           ],
         ),
-      ),
+      ],
     );
   }
 }
 
-// ── Botones ───────────────────────────────────────────────────────────────────
+// ── Buttons ───────────────────────────────────────────────────────────────────
 
 class _ConnectButton extends StatelessWidget {
-  final double screenW;
   final double screenH;
   final DronProvider provider;
 
-  const _ConnectButton({
-    required this.screenW,
-    required this.screenH,
-    required this.provider,
-  });
+  const _ConnectButton({required this.screenH, required this.provider});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
-      child: SizedBox(
-        width: double.infinity,
-        height: screenH * 0.07,
-        child: ElevatedButton.icon(
-          icon: const Icon(Icons.link),
-          label: const Text('CONNECT', style: TextStyles.button),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: provider.isConnected
-                ? AppColors.primary
-                : AppColors.disabled,
-            disabledBackgroundColor: AppColors.disabled,
-            foregroundColor: AppColors.textPrimary,
-            disabledForegroundColor: AppColors.textSecondary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+    final bool active = !provider.isLoading && !provider.isConnected;
+
+    return SizedBox(
+      width: double.infinity,
+      height: screenH * 0.075,
+      child: GestureDetector(
+        onTap: active ? context.read<DronProvider>().connectDron : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: active ? AppColors.primary : AppColors.disabled,
+            borderRadius: BorderRadius.circular(14),
+            border: active
+                ? Border.all(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    width: 1,
+                  )
+                : null,
           ),
-          onPressed: provider.isLoading || provider.isConnected
-              ? null
-              : context.read<DronProvider>().connectDron,
+          // DESPUÉS
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (provider.isLoading && !provider.isConnected)
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              else
+                Icon(
+                  provider.isConnected ? Icons.wifi : Icons.wifi_outlined,
+                  size: 20,
+                  color: active ? Colors.white : AppColors.textSecondary,
+                ),
+              const SizedBox(width: 10),
+              Text(
+                provider.isConnected ? 'CONNECTED' : 'CONNECT', // 👈 CAMBIO
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                  color: active ? Colors.white : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -807,23 +934,17 @@ class _ConnectButton extends StatelessWidget {
 }
 
 class _StartFlightButton extends StatelessWidget {
-  final double screenW;
   final double screenH;
   final DronProvider provider;
 
-  const _StartFlightButton({
-    required this.screenW,
-    required this.screenH,
-    required this.provider,
-  });
+  const _StartFlightButton({required this.screenH, required this.provider});
 
   @override
   Widget build(BuildContext context) {
-    final bool enabled =
+    final bool active =
         !provider.isLoading &&
         provider.isConnected &&
-        provider.isConfigValid &&
-        !provider.isFlying;
+        provider.isConfigValid;
 
     final Color modeColor = switch (provider.selectedMode) {
       ControlMode.classic => AppColors.primary,
@@ -837,59 +958,77 @@ class _StartFlightButton extends StatelessWidget {
       ControlMode.imu => Icons.sensors,
     };
 
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
-      child: SizedBox(
-        width: double.infinity,
-        height: screenH * 0.07,
-        child: ElevatedButton.icon(
-          icon: Icon(modeIcon),
-          label: const Text('START FLIGHT', style: TextStyles.button),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: enabled ? modeColor : AppColors.disabled,
-            disabledBackgroundColor: AppColors.disabled,
-            foregroundColor: AppColors.textPrimary,
-            disabledForegroundColor: AppColors.textSecondary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-          ),
-          onPressed: enabled
-              ? () {
-                  requestFullscreenEZ();
-                  if (provider.droneConnectionMode ==
-                      DroneConnectionMode.tello) {
+    return SizedBox(
+      width: double.infinity,
+      height: screenH * 0.075,
+      child: GestureDetector(
+        onTap: active
+            ? () {
+                requestFullscreenEZ();
+                if (provider.droneConnectionMode == DroneConnectionMode.tello) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const TelloFlightScreen(),
+                    ),
+                  );
+                  return;
+                }
+                switch (provider.selectedMode) {
+                  case ControlMode.classic:
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => const FlightScreen()),
+                    );
+                  case ControlMode.voice:
                     Navigator.push(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => const TelloFlightScreen(),
+                        builder: (_) => const VoiceFlightScreen(),
                       ),
                     );
-                    return;
-                  }
-                  switch (provider.selectedMode) {
-                    case ControlMode.classic:
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(builder: (_) => const FlightScreen()),
-                      );
-                    case ControlMode.voice:
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const VoiceFlightScreen(),
-                        ),
-                      );
-                    case ControlMode.imu:
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) => const ImuFlightScreen(),
-                        ),
-                      );
-                  }
+                  case ControlMode.imu:
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ImuFlightScreen(),
+                      ),
+                    );
                 }
-              : null,
+              }
+            : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: active ? modeColor : AppColors.disabled,
+            borderRadius: BorderRadius.circular(14),
+            border: active
+                ? Border.all(
+                    color: Colors.white.withValues(alpha: 0.15),
+                    width: 1,
+                  )
+                : null,
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                modeIcon,
+                size: 20,
+                color: active ? Colors.white : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 10),
+              Text(
+                'START FLIGHT',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                  color: active ? Colors.white : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -897,38 +1036,52 @@ class _StartFlightButton extends StatelessWidget {
 }
 
 class _DisconnectButton extends StatelessWidget {
-  final double screenW;
   final double screenH;
   final DronProvider provider;
 
-  const _DisconnectButton({
-    required this.screenW,
-    required this.screenH,
-    required this.provider,
-  });
+  const _DisconnectButton({required this.screenH, required this.provider});
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: screenW * 0.1),
-      child: SizedBox(
-        width: double.infinity,
-        height: screenH * 0.06,
-        child: ElevatedButton.icon(
-          icon: const Icon(Icons.link_off, size: 18),
-          label: const Text('DISCONNECT', style: TextStyles.button),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.danger,
-            disabledBackgroundColor: AppColors.danger,
-            foregroundColor: AppColors.textPrimary,
-            disabledForegroundColor: AppColors.textSecondary,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
+    final bool enabled = !provider.isLoading && provider.isConnected;
+
+    return SizedBox(
+      width: double.infinity,
+      height: screenH * 0.065,
+      child: GestureDetector(
+        onTap: enabled ? context.read<DronProvider>().disconnectDron : null,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            color: enabled
+                ? AppColors.danger.withValues(alpha: 0.1)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(
+              color: enabled ? AppColors.danger : AppColors.disabled,
+              width: 1.5,
             ),
           ),
-          onPressed: provider.isLoading || !provider.isConnected
-              ? null
-              : context.read<DronProvider>().disconnectDron,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                Icons.link_off,
+                size: 18,
+                color: enabled ? AppColors.danger : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 8),
+              Text(
+                'DISCONNECT',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                  letterSpacing: 1.2,
+                  color: enabled ? AppColors.danger : AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

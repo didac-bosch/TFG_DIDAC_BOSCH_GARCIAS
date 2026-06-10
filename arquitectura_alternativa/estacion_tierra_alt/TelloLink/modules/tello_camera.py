@@ -5,22 +5,31 @@ from datetime import datetime
 def stream_on(self):
     self._require_connected() #Comprueba que el dron está conectado
 
-    try:
-        self._tello.streamoff() #Por si de una sesión anterior había una sesión de stream colgada, se cierra el stream
+    # streamoff/streamon son comandos con respuesta sobre el socket del SDK.
+    # Se serializan con _sdk_lock para que la respuesta no se cruce con la del
+    # hilo de telemetría (wifi?) — eso hacía fallar streamon y, con ello, todo
+    # el arranque de WebRTC, dejando el stream sin iniciar.
+    with self._sdk_lock:
+        try:
+            self._tello.streamoff() #Por si de una sesión anterior había una sesión de stream colgada, se cierra el stream
+            time.sleep(0.2)
+        except Exception:
+            pass
+
+        try:
+            self._tello.streamon() #Ahora si que activa el vídeo con streamon()
+        except Exception as e:
+            try: self._tello.streamoff()  #Dejar el stream limpio si streamon falla
+            except Exception: pass
+            raise RuntimeError(f"No se pudo activar el stream (streamon): {e}")
         time.sleep(0.2)
-    except Exception:
-        pass
-
-
-    self._tello.streamon() #Ahora si que activa el vídeo con streamon()
-    time.sleep(0.2)
-
 
     try:
         self._frame_reader = self._tello.get_frame_read() #Se crea un objeto frame_reader que, en segundo plane captura contínuamente frames de la cámara del Tello
     except Exception as e:                                #self._frame_reader.frame contendrá el último fotograma disponible.
-        try: self._tello.streamoff()    #Si falla, se intenta apagar el stream para que quede "limpio"
-        except Exception: pass
+        with self._sdk_lock:
+            try: self._tello.streamoff()    #Si falla, se intenta apagar el stream para que quede "limpio"
+            except Exception: pass
         raise RuntimeError(f"No se pudo obtener frame reader: {e}") #Si no se consigue, se lanza error para avisar al usuario
 
     return True
@@ -30,7 +39,8 @@ def stream_off(self):
     try:
         if getattr(self, "_frame_reader", None) is not None: #Si existe un frame_reader activo, se elimina
             self._frame_reader = None
-        self._tello.streamoff() #Se manda al Tello la orden de parar el streaming de vídeo
+        with self._sdk_lock:
+            self._tello.streamoff() #Se manda al Tello la orden de parar el streaming de vídeo
         time.sleep(0.1)
     except Exception: #Si algo falla (no había  stream activo) se ignora
         pass
