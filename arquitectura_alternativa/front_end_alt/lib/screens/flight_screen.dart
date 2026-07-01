@@ -3,17 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_joystick/flutter_joystick.dart';
-import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../provider.dart';
 import '../core/styles.dart';
 import '../core/telemetry_widgets.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 import '../core/js_bridges.dart';
-import 'dart:js_interop';
-
-@JS('eval')
-external void _jsEval(String code);
+import '../core/drone_video_view.dart';
 
 class FlightScreen extends StatefulWidget {
   const FlightScreen({super.key});
@@ -530,7 +526,7 @@ class _MapVideoViewport extends StatelessWidget {
           child: provider.isVideoActive
               ? (provider.remoteStream != null
                   ? SizedBox.expand(
-                      child: _VideoView(stream: provider.remoteStream!),
+                      child: DroneVideoView(stream: provider.remoteStream!),
                     )
                   : const Center(
                       child: Text(
@@ -596,50 +592,59 @@ class _MapVideoViewport extends StatelessWidget {
                         ],
                       ),
                     if (provider.isFlying)
-                      CircleLayer(
-                        circles: [
-                          CircleMarker(
-                            point: LatLng(provider.currentLat, provider.currentLon),
-                            radius: 10,
-                            color: const Color.fromARGB(181, 171, 171, 171),
-                            borderColor: Colors.grey,
-                            borderStrokeWidth: 1,
-                            useRadiusInMeter: false,
-                          ),
-                        ],
-                      ),
-                    MarkerLayer(
-                      markers: [
-                        Marker(
-                          point: LatLng(provider.currentLat, provider.currentLon),
-                          width: 32,
-                          height: 48,
-                          child: Transform.rotate(
-                            angle: provider.currentHeading * pi / 180,
-                            child: Stack(
-                              clipBehavior: Clip.none,
-                              alignment: Alignment.center,
-                              children: [
-                                RepaintBoundary(
-                                  child: Image.asset(
-                                    'assets/images/drone_icon.png',
-                                    width: 24,
-                                    height: 24,
-                                  ),
-                                ),
-                                const Positioned(
-                                  top: -14,
-                                  child: Icon(
-                                    Icons.arrow_upward,
-                                    color: AppColors.warning,
-                                    size: 14,
-                                  ),
-                                ),
-                              ],
+                      ValueListenableBuilder<LatLng>(
+                        valueListenable: provider.droneRenderPos,
+                        builder: (_, renderPos, _) => CircleLayer(
+                          circles: [
+                            CircleMarker(
+                              point: renderPos,
+                              radius: 10,
+                              color: const Color.fromARGB(181, 171, 171, 171),
+                              borderColor: Colors.grey,
+                              borderStrokeWidth: 1,
+                              useRadiusInMeter: false,
                             ),
-                          ),
+                          ],
                         ),
-                      ],
+                      ),
+                    ValueListenableBuilder<LatLng>(
+                      valueListenable: provider.droneRenderPos,
+                      builder: (_, renderPos, _) => ValueListenableBuilder<double>(
+                        valueListenable: provider.droneRenderHeading,
+                        builder: (_, renderHeading, _) => MarkerLayer(
+                          markers: [
+                            Marker(
+                              point: renderPos,
+                              width: 32,
+                              height: 48,
+                              child: Transform.rotate(
+                                angle: renderHeading * pi / 180,
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  alignment: Alignment.center,
+                                  children: [
+                                    RepaintBoundary(
+                                      child: Image.asset(
+                                        'assets/images/drone_icon.png',
+                                        width: 24,
+                                        height: 24,
+                                      ),
+                                    ),
+                                    const Positioned(
+                                      top: -14,
+                                      child: Icon(
+                                        Icons.arrow_upward,
+                                        color: AppColors.warning,
+                                        size: 14,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -1160,56 +1165,6 @@ class _ZoomSlider extends StatelessWidget {
         divisions: 8,
         onChanged: (v) => context.read<DronProvider>().setZoom(v),
       ),
-    );
-  }
-}
-
-// ── Video View ────────────────────────────────────────────────────────────────
-
-class _VideoView extends StatefulWidget {
-  final MediaStream stream;
-  const _VideoView({required this.stream});
-
-  @override
-  State<_VideoView> createState() => _VideoViewState();
-}
-
-class _VideoViewState extends State<_VideoView> {
-  final RTCVideoRenderer _renderer = RTCVideoRenderer();
-
-  @override
-  void initState() {
-    super.initState();
-    _renderer.initialize().then((_) {
-      _renderer.srcObject = widget.stream;
-      setState(() {});
-      Future.delayed(const Duration(milliseconds: 300), () {
-        try {
-          _jsEval('''(function() {
-          var videos = document.querySelectorAll('video');
-          for (var v of videos) {
-            if (v.srcObject && v.srcObject.getVideoTracks().length > 0) {
-              window._droneStream = v.srcObject;
-              break;
-            }
-          }
-        })();''');
-        } catch (_) {}
-      });
-    });
-  }
-
-  @override
-  void dispose() {
-    _renderer.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return RTCVideoView(
-      _renderer,
-      objectFit: RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
     );
   }
 }

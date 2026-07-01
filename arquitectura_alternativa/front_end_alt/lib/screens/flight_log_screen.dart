@@ -1,5 +1,6 @@
 import 'dart:js_interop';
 import 'dart:math';
+import 'dart:ui_web' as ui_web;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -20,13 +21,16 @@ class FlightLogScreen extends StatefulWidget {
 }
 
 class _FlightLogScreenState extends State<FlightLogScreen> {
-  bool _showPlans = false;
+  int _tab = 0; // 0 = LOGS, 1 = PLANS, 2 = GALLERY
+  bool get _showPlans => _tab == 1;
+  bool get _showGallery => _tab == 2;
 
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
     final sessions = provider.flightHistory;
     final plans = provider.flightPlans;
+    final media = provider.mediaGallery;
     final screenH = MediaQuery.of(context).size.height;
     final isLandscape =
         MediaQuery.of(context).orientation == Orientation.landscape;
@@ -35,7 +39,11 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
       backgroundColor: AppColors.background,
       appBar: AppBar(
         title: Text(
-          _showPlans ? 'FLIGHT PLANS' : 'FLIGHT LOG',
+          _showGallery
+              ? 'GALLERY'
+              : _showPlans
+              ? 'FLIGHT PLANS'
+              : 'FLIGHT LOG',
           style: TextStyles.title,
         ),
         backgroundColor: AppColors.surface,
@@ -44,7 +52,39 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
         centerTitle: true,
         toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
         actions: [
-          if (!_showPlans) ...[
+          if (_showGallery) ...[
+            // Badge media
+            if (media.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(left: 8),
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Text(
+                      '${media.length}',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            if (media.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.delete_sweep, color: AppColors.danger),
+                tooltip: 'Clear gallery',
+                onPressed: () => _confirmClearGallery(context),
+              ),
+          ] else if (!_showPlans) ...[
             // Badge sesiones
             if (sessions.isNotEmpty)
               Padding(
@@ -103,6 +143,12 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
                   ),
                 ),
               ),
+            if (plans.isNotEmpty)
+              IconButton(
+                icon: const Icon(Icons.delete_sweep, color: AppColors.danger),
+                tooltip: 'Clear all plans',
+                onPressed: () => _confirmClearPlans(context),
+              ),
           ],
           const SizedBox(width: 4),
         ],
@@ -133,8 +179,8 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
                   child: _TabButton(
                     label: 'LOGS',
                     icon: Icons.history,
-                    selected: !_showPlans,
-                    onTap: () => setState(() => _showPlans = false),
+                    selected: _tab == 0,
+                    onTap: () => setState(() => _tab = 0),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -142,8 +188,17 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
                   child: _TabButton(
                     label: 'PLANS',
                     icon: Icons.map_outlined,
-                    selected: _showPlans,
-                    onTap: () => setState(() => _showPlans = true),
+                    selected: _tab == 1,
+                    onTap: () => setState(() => _tab = 1),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _TabButton(
+                    label: 'GALLERY',
+                    icon: Icons.photo_library_outlined,
+                    selected: _tab == 2,
+                    onTap: () => setState(() => _tab = 2),
                   ),
                 ),
               ],
@@ -153,7 +208,9 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
 
           // ── Contenido ─────────────────────────────────────────────────────
           Expanded(
-            child: _showPlans
+            child: _showGallery
+                ? _buildGalleryTab(context, provider)
+                : _showPlans
                 ? _buildPlansTab(context, provider)
                 : _buildLogsTab(sessions),
           ),
@@ -231,7 +288,127 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
     );
   }
 
+  // ── Gallery tab ─────────────────────────────────────────────────────────────
+  Widget _buildGalleryTab(BuildContext context, DronProvider provider) {
+    final media = provider.mediaGallery;
+    if (media.isEmpty) {
+      return const Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.photo_library_outlined,
+              size: 64,
+              color: AppColors.textSecondary,
+            ),
+            SizedBox(height: 16),
+            Text(
+              'No captures yet',
+              style: TextStyle(
+                color: AppColors.textPrimary,
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            SizedBox(height: 8),
+            Text(
+              'Take a photo or record a video during a flight',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+            ),
+          ],
+        ),
+      );
+    }
+    return GridView.builder(
+      padding: const EdgeInsets.all(12),
+      gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+        maxCrossAxisExtent: 200,
+        mainAxisSpacing: 12,
+        crossAxisSpacing: 12,
+        childAspectRatio: 0.82,
+      ),
+      itemCount: media.length,
+      itemBuilder: (ctx, i) => _MediaCard(
+        item: media[i],
+        onOpen: () => _openMedia(context, media[i]),
+        onDelete: () => _confirmDeleteMedia(context, media[i]),
+      ),
+    );
+  }
+
   // ── Dialogs ────────────────────────────────────────────────────────────────
+  void _confirmClearGallery(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Clear gallery?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: const Text(
+          'This will permanently delete all captures and videos.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              context.read<DronProvider>().clearMediaGallery();
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'Delete all',
+              style: TextStyle(color: AppColors.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmClearPlans(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        title: const Text(
+          'Clear all plans?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: const Text(
+          'This will permanently delete all flight plans.',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text(
+              'Cancel',
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              context.read<DronProvider>().clearAllFlightPlans();
+              Navigator.pop(context);
+            },
+            child: const Text(
+              'Delete all',
+              style: TextStyle(color: AppColors.danger),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _confirmClearAll(BuildContext context) {
     showDialog(
       context: context,
@@ -264,6 +441,250 @@ class _FlightLogScreenState extends State<FlightLogScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+// ─── GALLERY HELPERS ──────────────────────────────────────────────────────────
+// Registra un <video> HTML (con controles) para reproducir el blob: URL inline.
+final Set<String> _registeredVideoViews = {};
+
+String _registerVideoView(String url) {
+  final viewType = 'ez-video-$url';
+  if (!_registeredVideoViews.contains(viewType)) {
+    ui_web.platformViewRegistry.registerViewFactory(viewType, (int _) {
+      final v = web.HTMLVideoElement()
+        ..src = url
+        ..controls = true
+        ..autoplay = true;
+      v.style
+        ..width = '100%'
+        ..height = '100%'
+        ..backgroundColor = 'black';
+      return v;
+    });
+    _registeredVideoViews.add(viewType);
+  }
+  return viewType;
+}
+
+// Abre un visor a pantalla completa: foto con zoom o vídeo HTML5. Top-level
+// para reutilizarlo tanto en la galería como en el detalle de un vuelo.
+void _openMedia(BuildContext context, MediaItem item) {
+  final url = ezGetMediaUrl(item.id);
+  if (url.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Media not available')),
+    );
+    return;
+  }
+  showDialog(
+    context: context,
+    barrierColor: Colors.black87,
+    builder: (_) => Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.all(12),
+      child: Stack(
+        children: [
+          Center(
+            child: item.isPhoto
+                ? InteractiveViewer(
+                    child: Image.network(url, fit: BoxFit.contain),
+                  )
+                : AspectRatio(
+                    aspectRatio: 16 / 9,
+                    child: HtmlElementView(
+                      viewType: _registerVideoView(url),
+                    ),
+                  ),
+          ),
+          Positioned(
+            top: 0,
+            right: 0,
+            child: IconButton(
+              icon: const Icon(Icons.close, color: Colors.white, size: 28),
+              onPressed: () => Navigator.pop(context),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// Confirma y borra un medio de la galería (la fuente de la verdad). Las refs
+// en cualquier FlightSession se filtran solas al haber desaparecido el id.
+void _confirmDeleteMedia(BuildContext context, MediaItem item) {
+  showDialog(
+    context: context,
+    builder: (_) => AlertDialog(
+      backgroundColor: AppColors.surface,
+      title: const Text(
+        'Delete capture?',
+        style: TextStyle(color: AppColors.textPrimary),
+      ),
+      content: const Text(
+        'This will remove it from the gallery.',
+        style: TextStyle(color: AppColors.textSecondary),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text(
+            'Cancel',
+            style: TextStyle(color: AppColors.textSecondary),
+          ),
+        ),
+        TextButton(
+          onPressed: () {
+            context.read<DronProvider>().deleteMediaItem(item.id);
+            Navigator.pop(context);
+          },
+          child: const Text(
+            'Delete',
+            style: TextStyle(color: AppColors.danger),
+          ),
+        ),
+      ],
+    ),
+  );
+}
+
+// Tarjeta de la galería — miniatura de foto o portada de vídeo con metadata.
+class _MediaCard extends StatelessWidget {
+  final MediaItem item;
+  final VoidCallback onOpen;
+  final VoidCallback onDelete;
+
+  const _MediaCard({
+    required this.item,
+    required this.onOpen,
+    required this.onDelete,
+  });
+
+  String _formatDate(DateTime d) {
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${two(d.day)}/${two(d.month)}/${d.year}  ${two(d.hour)}:${two(d.minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final url = ezGetMediaUrl(item.id);
+    return GestureDetector(
+      onTap: onOpen,
+      child: Container(
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppColors.disabled),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            // Miniatura
+            Expanded(
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  if (item.isPhoto && url.isNotEmpty)
+                    Image.network(
+                      url,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, _, _) => const ColoredBox(
+                        color: Colors.black26,
+                        child: Icon(
+                          Icons.broken_image,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    )
+                  else
+                    Container(
+                      color: Colors.black54,
+                      child: Center(
+                        child: Icon(
+                          item.isPhoto
+                              ? Icons.image
+                              : Icons.play_circle_fill,
+                          color: Colors.white70,
+                          size: 44,
+                        ),
+                      ),
+                    ),
+                  // Insignia tipo
+                  Positioned(
+                    top: 6,
+                    left: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 6,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.black54,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Icon(
+                        item.isPhoto
+                            ? Icons.photo_camera
+                            : Icons.videocam,
+                        color: Colors.white,
+                        size: 14,
+                      ),
+                    ),
+                  ),
+                  // Botón borrar
+                  Positioned(
+                    top: 2,
+                    right: 2,
+                    child: IconButton(
+                      icon: const Icon(
+                        Icons.delete_outline,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                      style: IconButton.styleFrom(
+                        backgroundColor: Colors.black45,
+                        minimumSize: const Size(30, 30),
+                        padding: EdgeInsets.zero,
+                      ),
+                      onPressed: onDelete,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // Metadata
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _formatDate(item.timestamp),
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  if (item.hasGps)
+                    Text(
+                      '${item.lat!.toStringAsFixed(5)}, ${item.lon!.toStringAsFixed(5)}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: AppColors.textSecondary,
+                        fontSize: 10,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -991,6 +1412,13 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     return sb.toString();
   }
 
+  // Resuelve los MediaItem capturados en este vuelo desde la galería (fuente de
+  // la verdad), descartando refs cuyo medio ya se haya borrado.
+  List<MediaItem> _sessionMedia(DronProvider p) => widget.session.mediaIds
+      .map((id) => p.mediaGallery.where((m) => m.id == id))
+      .expand((e) => e)
+      .toList();
+
   void _downloadCSV() {
     final csv = _buildCSV();
     final dateStr = widget.session.startTime
@@ -1022,6 +1450,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     final trail = session.trail;
     final hasTrail = trail.length >= 2;
     final modeColor = _modeColor(session.controlMode);
+    // Medios capturados durante este vuelo (vista filtrada de la galería)
+    final sessionMedia = _sessionMedia(context.watch<DronProvider>());
 
     // Trail visible: solo hasta _playIndex
     final visibleTrail = hasTrail
@@ -1421,6 +1851,50 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
               ),
             ),
             const SizedBox(height: 24),
+
+            // ── Fotos y vídeos del vuelo ──────────────────────────
+            if (sessionMedia.isNotEmpty) ...[
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 20),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.photo_library_outlined,
+                      size: 18,
+                      color: AppColors.textSecondary,
+                    ),
+                    SizedBox(width: 8),
+                    Text(
+                      'Gallery',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              GridView.builder(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                shrinkWrap: true,
+                physics: const NeverScrollableScrollPhysics(),
+                gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
+                  maxCrossAxisExtent: 200,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 0.82,
+                ),
+                itemCount: sessionMedia.length,
+                itemBuilder: (ctx, i) => _MediaCard(
+                  item: sessionMedia[i],
+                  onOpen: () => _openMedia(context, sessionMedia[i]),
+                  onDelete: () => _confirmDeleteMedia(context, sessionMedia[i]),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
 
             // ── Botón CSV ─────────────────────────────────────────
             Padding(

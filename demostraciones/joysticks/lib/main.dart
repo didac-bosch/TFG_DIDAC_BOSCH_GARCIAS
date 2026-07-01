@@ -8,7 +8,7 @@ import 'package:flutter_joystick/flutter_joystick.dart';
 // Esta app demuestra el uso de la librería flutter_joystick
 // para implementar dos joysticks virtuales estilo mando RC.
 //
-// LIBRERÍA: flutter_joystick: ^0.0.4
+// LIBRERÍA: flutter_joystick: ^0.2.2
 //
 // FUNCIONAMIENTO:
 //   - Cada joystick devuelve valores X e Y en rango [-1.0, 1.0]
@@ -16,6 +16,7 @@ import 'package:flutter_joystick/flutter_joystick.dart';
 //   - Y: -1.0 (arriba)    - +1.0 (abajo) 
 //   - Al soltar el joystick vuelve automáticamente a (0.0, 0.0)
 //   - El listener se llama continuamente mientras está movido
+//   - JoystickMode.all permite movimiento en todas las direcciones, pero también hay opciones para restringir a horizontal o vertical.
 //
 // JOYSTICK IZQUIERDO  - Throttle (Y) y Yaw (X). (En el caso del mando RC, sino se pueden atribuir valores al gusto)
 // JOYSTICK DERECHO    - Pitch (Y) y Roll (X)
@@ -33,7 +34,6 @@ import 'package:flutter_joystick/flutter_joystick.dart';
 
 void main() {
   runApp(const MaterialApp(
-    debugShowCheckedModeBanner: false,
     home: JoystickDemo(),
   ));
 }
@@ -45,7 +45,11 @@ class JoystickDemo extends StatefulWidget {
   State<JoystickDemo> createState() => _JoystickDemoState();
 }
 
-class _JoystickDemoState extends State<JoystickDemo> {
+class _JoystickDemoState extends State<JoystickDemo> { 
+  //clase de estado para actualizar los valores de los joysticks en tiempo real
+
+  //VARIABLES DE ESTADO (VALORES DE LOS JOYSTICKS)
+
   // Valores joystick izquierdo
   double _leftX = 0.0;   // rotación
   double _leftY = 0.0;   // altitud
@@ -79,11 +83,11 @@ class _JoystickDemoState extends State<JoystickDemo> {
                     const Text('LEFT', style: TextStyle(color: Colors.white54, fontSize: 12)),
                     const SizedBox(height: 8),
                     Text(
-                      'X: ${_leftX.toStringAsFixed(2)}',
+                      'X: ${_leftX.toStringAsFixed(2)}', // Valor del joystick izquierdo (rotación)
                       style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     Text(
-                      'Y: ${_leftY.toStringAsFixed(2)}',
+                      'Y: ${_leftY.toStringAsFixed(2)}',  // Valor del joystick izquierdo (altitud)
                       style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -96,11 +100,11 @@ class _JoystickDemoState extends State<JoystickDemo> {
                     const Text('RIGHT', style: TextStyle(color: Colors.white54, fontSize: 12)),
                     const SizedBox(height: 8),
                     Text(
-                      'X: ${_rightX.toStringAsFixed(2)}',
+                      'X: ${_rightX.toStringAsFixed(2)}', // Valor del joystick derecho (izquierda/derecha)
                       style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     Text(
-                      'Y: ${_rightY.toStringAsFixed(2)}',
+                      'Y: ${_rightY.toStringAsFixed(2)}', // Valor del joystick derecho (adelante/atrás)
                       style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                   ],
@@ -110,6 +114,7 @@ class _JoystickDemoState extends State<JoystickDemo> {
           ),
 
           const SizedBox(height: 48),
+
 
           // JOYSTICKS
           Row(
@@ -122,7 +127,9 @@ class _JoystickDemoState extends State<JoystickDemo> {
                     style: TextStyle(color: Colors.white54, fontSize: 12)),
                   const SizedBox(height: 12),
                   Joystick(
-                    mode: JoystickMode.all,     //todas las direcciones
+                    mode: JoystickMode.all,     //JoystickMode.all permite movimiento en todas las direcciones
+
+
                     listener: (details) {       //callback con los valores
                       setState(() {
                         _leftX = details.x;  // -1.0 a 1.0
@@ -133,6 +140,7 @@ class _JoystickDemoState extends State<JoystickDemo> {
                 ],
               ),
 
+
               // JOYSTICK DERECHO
               Column(
                 children: [
@@ -141,6 +149,8 @@ class _JoystickDemoState extends State<JoystickDemo> {
                   const SizedBox(height: 12),
                   Joystick(
                     mode: JoystickMode.all,
+
+      
                     listener: (details) {
                       setState(() {
                         _rightX = details.x;

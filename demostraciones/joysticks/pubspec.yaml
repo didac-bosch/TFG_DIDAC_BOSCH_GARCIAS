@@ -1,5 +1,5 @@
 name: joysticks
-description: "A new Flutter project."
+description: "Demo: dos joysticks virtuales estilo mando RC para el control Classic del dron."
 publish_to: 'none'
 version: 0.1.0
 

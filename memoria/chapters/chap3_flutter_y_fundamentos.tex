@@ -1,0 +1,95 @@
+\chapter{Flutter y fundamentos}
+Este capítulo presenta el marco tecnológico del proyecto. El apartado 3.1 introduce el framework de Flutter y el lenguaje de programación Dart. El 3.2 explica los modos de comunicación del DEE. El 3.3 introduce el concepto de API y los tipos más relevantes. Los apartados 3.4-3.7 describen los protocolos de transporte y de aplicación usados: TCP/UDP, HTTP/HTTPS, MQTT y WebRTC. El capítulo concluye con el apartado 3.8, que agrupa los repositorios y herramientas de desarrollo utilizados a lo largo del proyecto.
+
+\section{Framework Flutter}
+Flutter es un framework de código abierto desarrollado por Google para la construcción de interfaces de usuario nativas y compiladas desde una única base de código. A diferencia de los frameworks tradicionales, que generan una interfaz web envuelta en un contenedor, Flutter dispone de su propio motor de renderizado, y dibuja cada píxel directamente en el canvas del sistema operativo, sin tener que delegar en los componentes de cada plataforma. Desde una misma base de código, es posible compilar y desplegar la aplicación en Android, iOS, web, escritorio (Windows, macOS, Linux) y dispositivos embebidos.
+
+\subsection{Lenguaje Dart}
+Flutter utiliza Dart como lenguaje de programación\cite{dart}. Dart es un lenguaje compilado, orientado a objetos, también desarrollado por Google, con soporte nativo para programación asíncrona, mediante los comandos \texttt{\'"Async / Await"} y la clase \texttt{"Future"}, y para flujos de datos continuos mediante \texttt{"Stream"}. Para la compilación web, el compilador  \texttt{"dart2js"}\cite{dart2js} traduce el código Dart a JavaScript optimizado, que es lo que se ejecuta en el navegador en el caso de Flutter Web.
+
+\subsection{Modelo de widgets y árbol de renderizado}
+La unidad fundamental de construcción en Flutter es el widget\cite{flutter_arch}. Todo en la interfaz es un widget: los botones, el texto, el mapa, los contenedores del layout e incluso los gestores de estado. Los widget son objetos inmutables que describen una porción de la interfaz, no la representan directamente, y Flutter reconstruye solo las partes del árbol que han cambiado cuando el estado de la aplicación se modifica.
+
+Flutter distingue dos tipos de widgets. Los \texttt{StatelessWidget}, widgets sin estado interno: su apariencia depende únicamente de los parámetros que reciben y del estado del sistema proporcionado por sus ancestros en el árbol. Son los más ligeros y se utilizan para componentes cuya representación no cambia una vez construidos. Los \texttt{StatefulWidget} contienen un objeto State mutable: cuando se llama a \texttt{setState( )}, Flutter invalida el widget y lo reconstruye con los nuevos valores. En este proyecto, la pantalla de configuración y la de vuelo de la arquitectura base son \texttt{StatelessWidget} suscritos al \texttt{DronProvider}, mientras que el botón de movimiento continuo \texttt{ContinuousButton} es un \texttt{StatefulWidget} porque necesita rastrear si está siendo pulsado en cada instante.
+
+El proceso de renderizado de Flutter se divide en tres árboles que se mantienen sincronizados: el árbol de widgets (la descripción declarativa de la interfaz), el árbol de elementos (la instancia persistente de cada widget en el árbol) y el árbol de renderizado (los objetos que calculan el layout, la pintura y la composición). Este diseño permite que las reconstrucciones del árbol de widgets no sean muy pesadas, ya que Flutter reutiliza los elementos y objetos siempre que no hayan cambiado.
+
+\subsection{Gestión de estados con Provider}
+Para aplicaciones que deben reflejar un estado compartido entre múltiples widgets, como la telemetría del dron, el mapa y los botones de la barra inferior, Flutter no impone un patrón específico, pero la comunidad de usuarios de Flutter ha convergido en varias soluciones. Este proyecto utiliza la librería Provider\cite{provider}, que implementa el patrón de inyección de dependencias y notificación de cambios sobre el mecanismo nativo \texttt{InheritedWidget} de Flutter.
+
+La clase \texttt{DronProvider} centraliza todo el estado de la aplicación, las variables de telemetría y los flags de estado, los métodos que ejecutan las acciones del operador y la lógica de obtención de datos del dron. Cuando cualquiera de estas variables cambia, la llamada a \texttt{notifyListeners()} provoca la reconstrucción de todos los widgets que se han suscrito al provider mediante \texttt{context.watch<DronProvider>()}. Los widgets que solo necesitan usar métodos del provider, sin suscribirse a sus cambios, utilizan \texttt{context.read<DronProvider>( )}, que no establece una suscripción. Es el acceso correcto dentro de callbacks como el \texttt{onPressed} de un botón.
+
+Usando este diseño, las pantallas no contienen ninguna lógica de estado y se limitan a leer el Provider y a invocar sus métodos. 
+
+\section{Modos de comunicación}
+El DEE define tres modos de comunicación que determinan cómo se conectan entre sí los módulos a bordo, las aplicaciones de frontend y los servicios de backend.
+
+El modo global asume que todos los componentes están conectados a internet. La comunicación se enruta a través de un broker MQTT externo (HiveMQ\cite{hivemq} o el broker de la UPC). Es el modo estándar para la operación remota y para aplicaciones web, y el que emplea EZDrone.
+
+El modo local se utiliza cuando no hay cobertura de internet. El dispositivo del operador se conecta directamente al punto de acceso Wi-Fi proporcionado por la Raspberry Pi a bordo, y una instancia de Mosquitto\cite{mosquitto} se ejecuta localmente. Los módulos del frontend se conectan a 10.10.1.8000 y los módulos a bordo a localhost:8000.
+
+El modo directo se emplea cuando no existe computador a bordo. El servicio de autopilot se ejecuta como parte de la aplicación de frontend y se conecta directamente al autopilot mediante una radio de telemetría. Es también el modo utilizado en la simulación SITL\cite{ardupilot_sitl}, donde todos los módulos, incluyendo el broker, se ejecutan en un único dispositivo.
+
+\section{Interfaces de programación de aplicaciones (API)}
+Una API (Application Programming Interface)\cite{api} es un contrato software que define cómo dos componentes se comunican entre sí, qué operaciones están disponibles, qué formato tienen los mensajes y qué respuestas pueden esperarse. En el contexto de este proyecto, las APIs relevantes son de tipo red, es decir, definen el intercambio de mensajes entre procesos que se ejecutan en dispositivos distintos.
+
+Los dos tipos de APIs de red más utilizados en el desarrollo web son las APIs REST y las APIs basadas en WebSocket. EZDrone usa ambas en distintas fases de su evolución arquitectónica.
+
+Una API REST (Representational State Transfer)\cite{apirest} es un estilo arquitectónico que opera sobre HTTP. Cada recurso o acción del sistema se expone como una URL, y las operaciones se expresan mediante verbos HTTP estándar: \texttt{GET} para consultar un estado, \texttt{POST} para enviar comandos. La interacción es siempre iniciada por el cliente, y es sin estado, el servidor no retiene información entre peticiones. En la arquitectura base descrita en el Capítulo 5, el backend Dart expone una API REST sobre HTTP con endpoints como \texttt{/connect}, \texttt{/arm}, \texttt{/takeoff} o \texttt{/status}. El frontend Flutter llama periódicamente a \texttt{/status} para obtener telemetría.
+
+WebSocket\cite{websocket} es un protocolo que establece un canal de comunicación full-duplex y persistente sobre una única conexión TCP. A diferencia de HTTP, una vez completado el handshake inicial, tanto el cliente como el servidor pueden enviar mensajes en cualquier momento y en ambas direcciones, sin que el otro extremo haya realizado una petición previa. Esto elimina la necesidad de estar constantemente solicitando actualizaciones de estado y reduce la latencia a la del propio canal. 
+
+\section{Protocolos de transporte: TCP y UDP}
+Antes de describir los protocolos de aplicación empleados en este proyecto, es necesario presentar los dos protocolos de capa de transporte sobre los que se construyen, TCP y UDP, cuyas diferencias fundamentales justifican las decisiones arquitectónicas adoptadas en el proyecto.
+
+TCP (Transmission Control Protocol)\cite{tcp} es un protocolo orientado a la conexión que garantiza una entrega fiable y ordenada de los datos entre dos dispositivos. Antes de intercambiar ningún dato, se establece una conexión mediante un proceso de handshake. A partir de ese momento, todos los paquetes enviados son confirmados por el receptor, si esta confirmación no llega, el paquete se retransmite automáticamente. Este mecanismo garantiza que ningún dato se pierde, duplica o entrega fuera de orden. El coste de esta fiabilidad es una alta latencia (culpa de los ciclos de confirmación y retransmisión, ya que si hay una retransmisión, todos los paquetes posteriores quedan retenidos).
+
+UDP (User Datagram Protocol)\cite{udp} adopta el enfoque contrario, es un protocolo sin conexión que envía paquetes sin establecer una conexión previa ni ofrecer ninguna garantía de entrega. Los paquetes pueden perderse, llegar fuera de orden o duplicarse, y el protocolo no realiza ningún intento de corregirlo. Lejos de ser una limitación, esta característica hace que sea idóneo para flujos continuos en tiempo real. Si un paquete que transporta una trama del joystick o un segmento de vídeo se pierde, lo más eficiente es descartarlo y utilizar el siguiente paquete, una lectura ligeramente desactualizada es menos perjudicial que un flujo paralizado esperando una retransmisión.
+
+Este balance entre fiabilidad y latencia, hace que en el proyecto se adopte el uso de los dos protocolos: MQTT, construido sobre TCP, se emplea para los comandos discretos y las notificaciones de cambio de estado, donde la pérdida de un mensaje es inaceptable. WebRTC construido sobre UDP, se emplea para la telemetría continua y el vídeo, donde la latencia importa más que la entrega garantizada.
+
+\section{Protocolo HTTP}
+HTTP (Hypertext Transfer Protocol)\cite{http} es el protocolo de comunicación de datos de la web. Opera sobre TCP y sigue un modelo de petición-respuesta. El cliente envía una petición, el servidor la procesa y devuelve una respuesta, justo después, la conexión se cierra o se mantiene para recibir más peticiones. HTTP es un protocolo sin estado, lo que significa que cada petición es independiente y el servidor no tiene memoria de las interacciones anteriores.
+
+En el contexto de este proyecto, HTTP es el protocolo empleado en la arquitectura base descrita en el Capítulo 5. El frontend Flutter emite peticiones \texttt{HTTP POST} para lanzar comandos y peticiones \texttt{HTTP GET} para consultar el estado del dron. Esta última estrategia recibe el nombre de "polling", consultar periódicamente el servidor en busca de datos actualizados. Es sencilla de implementar y suficiente para actualizaciones de baja latencia, pero introduce latencia proporcional al intervalo de consulta y genera tráfico de red innecesario cuando no hay cambio de estado. Esta limitación motiva directamente la evolución arquitectónica descrita en el Capítulo 7, donde el polling HTTP es reemplazado por canales de datos WebRTC.
+
+\subsection{HTTPS y TLS}
+HTTPS es la versión segura y certificada del HTTP. No se trata de un protocolo distinto, sino que es el mismo HTTP con una capa de seguridad añadida mediante TLS (Transport Layer Security)\cite{tls}, que cifra todo el tráfico entre el cliente y el servidor. Cualquier dato intercambiado es ilegible para un tercero que intercepte la comunicación, ya que solamente los dos extremos de la conexión tienen las claves necesarias para descifrarlo.
+
+El establecimiento de una conexión TLS se realiza mediante un handshake, donde el servidor presenta su certificado digital (emitido por una autoridad certificadora, "CA", de confianza que acredita que el servidor es quien dice ser y que contiene su clave pública). El cliente verifica que el certificado haya sido acreditado por una CA, y a partir de allí ambos extremos negocian una clave de sesión con la que cifrarán el resto del intercambio. 
+
+En el contexto de este proyecto, el uso de HTTPS es obligatorio, ya que los navegadores bloquean muchas acciones hechas en HTTP plano, ya sea el uso de WebSockets seguros, o APIs con acceso interno a los dispositivos (como el control por IMU o por voz)\cite{bloqueo_http}.
+
+\section{Protocolo MQTT}
+MQTT (Message Queuing Telemetry Transport)\cite{mqtt} es el protocolo principal de intercambio de comandos y estados entre módulos en el DEE. Se trata de un protocolo de mensajería publicación-suscripción ligero.
+
+El protocolo opera en torno a un broker central al que se conectan todos los módulos. Un módulo que desea enviar un mensaje lo publica en un topic específico, cualquier módulo suscrito a ese topic recibe el mensaje. Este modelo desacoplado implica que publicadores y suscriptores no necesitan conocerse mutuamente, únicamente comparten el broker y la convención de nombre de los topics.
+
+En el DEE, los nombre de topics siguen un convenio estandarizado con la siguiente forma:
+
+\texttt{[módulo\_origen] / [módulo\_destino] / [comando]}
+
+Por ejemplo, cuando la aplicación Flutter solicita un despegue, publica en el topic \texttt{"mobileFlutter/ groundStation/ takeoff"}. La estación de tierra, suscrita a \texttt{"mobileFlutter/ groundStation/  \#"}, recibe el mensaje y emite la orden correspondiente al autopiloto. Cuando el dron ha alcanzado la altitud objetivo, la estación tierra publica en \texttt{groundStation/ mobileFlutter/ flying}. Esta convención bidireccional hace el enrutamiento de mensajes explícito y trazable, lo que resulta útil durante el desarrollo y la depuración.
+
+Para las aplicaciones Flutter Web, la comunicación MQTT debe utilizar el transporte WebSocket en lugar de TCP directo, dado que los navegadores no permiten abrir conexiones de socket arbitrarias. El broker público de HiveMQ soporta ambas variantes del WebSocket, WebSocket plano (puerto 8000) y WebSocket Seguro (WSS, puerto 8884), siendo este último obligatorio cuando la aplicación web se sirve mediante HTTPS.
+
+\section{Protocolo WebRTC}
+WebRTC (Web Real-Time Communication)\cite{webrtc} es un estándar abierto y una API que permite la comunicación peer-to-peer de audio, vídeo y datos directamente entre navegadores y aplicaciones nativas, sin requerir de servidores intermedios para los flujos de datos en sí. Desarrollado originalmente para la videoconferencia en navegadores, ha sido adoptado ampliamente en teleoperación, robótica, streaming en vivo y muchas aplicaciones, gracias a su baja latencia y su soporte nativo en todos los navegadores modernos.
+
+Una conexión WebRTC se establece mediante un proceso de señalización (o signalling)\cite{signalling} en el que los dos peers intercambias descriptores de sesión (ofertas y respuestas SDP, Session Description Protocol) e informan de accesibilidad de red (candidatos ICE, interactive Connectivity Establishment) a través de un servidor de señalización intermediario . Una vez establecida la conexión, los flujos medios y datos circulan directamente entre peers. El servidor de señalización sólo es necesario para la fase del handshake.
+
+En EZDrone, el servidor de señalización es el mismo backend Dart, alojado en el dominio de la EETAC \texttt{dronseetac.upc.edu:8105}. Este servidor, además de retransmitir los mensajes SDP e ICE entre la estación tierra Python y el cliente Flutter, envía a cada peer recién conectado la configuración ICE del ecosistema: un servidor STUN público y un servidor TURN privado alojado en dronseetac.upc.edu, necesario para establecer la conexión cuando alguno de los peers se encuentra detrás de un NAT estricto.
+
+En este proyecto, se usan dos tipos de canales WebRTC,
+
+\texttt{Las pistas de vídeo/audio, son flujos de medios unidireccionales para la transmisión de la imagen de la cámara desde }ARRREEEEGGGGGLLLLLAAAARRRRR
+
+Los DataChannels son canales de datos bidireccionales y de baja latencia, para la transmisión de datos binarios o de texto arbitrarios entre peers. En EZDrone se utilizan dos Datachannels, el de los joysticks, por el que Flutter envía los valores de los cuatro ejes del mando a la estación tierra, y el de la telemetría, por el cual la estación tierra envía a Flutter el estado del dron y los datos de vuelo en formato JSON\cite{json}.
+
+La ventaja principal de utilizar DataChannels WebRTC para la telemetría y el control de joysticks frente a MQTT reside en la latencia y el desacoplamiento del broker, una vez se ha establecido la conexión entre los peers, los datos fluyen directamente entre ellos sin pasar por el broker, eliminando el retardo de ida y vuelta, y el riesgo de saturación del broker ante actualizaciones de tan alta frecuencia.
+
+\section{Repositorios y herramientas de desarrollo}
+El DEE se organiza en repositorios GitHub, uno por bloque funcional. Cada repositorio contiene el código fuente, instrucciones de instalación, tutoriales y vídeos de demostración. El repositorio principal, que sirve como punto de entrada y proporciona la descripción de la arquitectura global, es https://github.com/dronsEETAC/DroneEngineeringEcosystemDEE. 
+El bloque directamente relevante para este proyecto es el repositorio de aplicaciones Flutter, que consolida todos los módulos de frontend basados en Flutter contribuidos por estudiantes en sucesivos proyectos de fin de estudios.
+
+Las herramientas de desarrollo principales empleadas a lo largo del proyecto son: VS Code con los plugins de Flutter y Dart (y muchos más explicados a lo largo del proyecto) para el desarrollo del frontend, el backend de señalización y la estación de tierra en Python junto a la librería de DronLink. Mission Planner en Windows para la simulación SITL. El broker público de HiveMQ como broker MQTT externo y Git y GitHub para el control de versiones. 

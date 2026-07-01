@@ -20,10 +20,11 @@ def _read_height_cm_runtime(self) -> float:
 #Función pública del aterrizaje
 def Land(self, blocking=True, callback=None, params=None):
 
-    #Evitamos lanzar 2 lands a la vez
+    #Evitamos lanzar 2 lands a la vez. Devolvemos False: esta llamada no
+    #confirma nada nuevo (la que está en curso decidirá el resultado).
     if getattr(self, "_landing_in_progress", False):
         print("[land] Ya hay un aterrizaje en curso; ignoro la petición duplicada.")
-        return True
+        return False
 
     setattr(self, "_landing_in_progress", True)
 
@@ -47,10 +48,14 @@ def Land(self, blocking=True, callback=None, params=None):
     # 2) Modo bloqueante o no-bloqueante
     if blocking:
         try:
-            _land(self, callback=callback, params=params)
+            # Propagamos el resultado real del aterrizaje: solo True si se
+            # confirma el descenso por altura. Si _land() falla o expira el
+            # timeout, devolvemos False para que el llamador NO publique
+            # 'landed' (el dron podría seguir en el aire).
+            ok = _land(self, callback=callback, params=params)
         finally:
             setattr(self, "_landing_in_progress", False)
-        return True
+        return bool(ok)
     else:
         def _runner():
             try:
@@ -61,7 +66,9 @@ def Land(self, blocking=True, callback=None, params=None):
         return True
 
 
-#Función que contiene toda la lógica del aterrizaje completo
+#Función que contiene toda la lógica del aterrizaje completo.
+#Devuelve True solo si se CONFIRMA el descenso a suelo; False si expira el
+#timeout sin bajar (el dron podría seguir en el aire).
 def _land(self, callback=None, params=None):
 
     try:
@@ -77,7 +84,7 @@ def _land(self, callback=None, params=None):
             print("[land] Altura inicial ≤ 20 cm. Ya está en el suelo; no mando 'land'.")
             _normalize_after_land(self)
             _do_callback(callback, params)
-            return
+            return True
 
         # Enviar 'land'
         try:
@@ -87,22 +94,35 @@ def _land(self, callback=None, params=None):
 
             print(f"[land] Aviso al enviar 'land': {e}")
 
-        # Esperamos a que realmente baje (por altura) con timeout
+        # Esperamos a que realmente baje (por altura) con timeout.
+        # Exigimos NEEDED_OK lecturas consecutivas ≤ LOW_CM para no fiarnos de
+        # una lectura puntual errónea de get_height().
         TIMEOUT_S = 15.0      # ventana  para que baje
         LOW_CM    = 15.0      # umbral “en suelo”
+        NEEDED_OK = 3         # lecturas bajas consecutivas para confirmar
+        landed_ok = False
+        low_streak = 0
         t0 = time.time()
         while time.time() - t0 < TIMEOUT_S:
             h = _read_height_cm_runtime(self)
             if h <= LOW_CM:
-                break
+                low_streak += 1
+                if low_streak >= NEEDED_OK:
+                    landed_ok = True
+                    break
+            else:
+                low_streak = 0
             time.sleep(0.2)
 
         #Normalizamos el estado al final
         _normalize_after_land(self)
-        print("[land] Completado.")
-
+        if landed_ok:
+            print("[land] Completado: descenso confirmado por altura.")
+        else:
+            print("[land] AVISO: timeout sin confirmar descenso; el dron podría seguir en el aire.")
 
         _do_callback(callback, params)
+        return landed_ok
 
     finally:
 

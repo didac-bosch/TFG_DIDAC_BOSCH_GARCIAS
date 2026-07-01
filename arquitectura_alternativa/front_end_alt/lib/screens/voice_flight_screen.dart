@@ -170,7 +170,7 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
   }
 
   void _stopMove() {
-    context.read<DronProvider>().updateJoystick(lx: 0, ly: 0, rx: 0, ry: 0);
+    context.read<DronProvider>().emergencyStop();
   }
 
   // Mapea palabras clave a acciones concretas del provider o movimientos de joystick.
@@ -493,6 +493,66 @@ class _VoiceFlightScreenState extends State<VoiceFlightScreen> {
                                     ? AppColors.textSecondary
                                     : AppColors.danger,
                                 fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // ----------- Botón PARADO DE EMERGENCIA
+                  // Detiene el movimiento (hover) sin depender de la voz.
+                  // Solo activo en vuelo.
+                  Positioned(
+                    top: screenH * 0.02,
+                    left: screenW * 0.03,
+                    child: GestureDetector(
+                      onTap: provider.isFlying
+                          ? () => context.read<DronProvider>().emergencyStop()
+                          : null,
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 200),
+                        width: 64,
+                        height: 64,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: provider.isFlying
+                              ? AppColors.danger
+                              : AppColors.disabled,
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.18),
+                            width: 2,
+                          ),
+                          boxShadow: provider.isFlying
+                              ? [
+                                  BoxShadow(
+                                    color: AppColors.danger.withValues(
+                                      alpha: 0.5,
+                                    ),
+                                    blurRadius: 14,
+                                    spreadRadius: 1,
+                                    offset: const Offset(0, 2),
+                                  ),
+                                ]
+                              : null,
+                        ),
+                        child: const Column(
+                          mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.pan_tool,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                            SizedBox(height: 2),
+                            Text(
+                              'STOP',
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 10,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),

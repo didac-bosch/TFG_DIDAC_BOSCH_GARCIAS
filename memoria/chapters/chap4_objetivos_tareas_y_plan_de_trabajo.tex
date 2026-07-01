@@ -1,0 +1,28 @@
+\chapter{Objetivos, tareas y plan de trabajo}
+
+\section{Objetivos}
+\subsection{Objetivo general}
+El objetivo principal de este proyecto es diseñar, implementar y documentar una colección de aplicaciones Flutter de demostración y una estación de control de tierra web (EZDrone), destinadas al control de drones ArduPilot y DJI Tello dentro del DEE. 
+
+\subsection{Objetivos específicos}
+\begin{itemize}
+    \item {OE1- Control básico de un dron.}Implementar una aplicación Flutter base capaz de conectarse a un dron Ardupilot mediante MQTT y ejecutar las operaciones de vuelo fundamentales: armado de motores, despegue, navegación direccional, retorno al punto de lanzamiento (RTL) y aterrizaje.
+    \item {OE2 - Demostraciones de paradigmas de control.}Desarrollar demostraciones Flutter independientes y documentadas que exploren los distintos mecanismos de control  e interacción con el dron: joystick virtuales, control por voz o mediante mediciones inerciales de la IMU, localización GPS del operador, streaming de vídeo con detección de objetos, planificación de misiones autónomas y registro y análisis de vuelos.
+    \item {OE3 - Arquitectura de comunicación híbrida.}Diseñar una arquitectura que combine MQTT (para comandos discretos y cambios de estado) con canales de datos y pistas de vídeo WebRTC (para parámetros de alta frecuencia como telemetría continua y vídeo en tiempo real).
+    \item {OE4 - Estación de tierra en Python.}Implementar una estación de tierra en Python que traduzca los comandos normalizados recibidos vía MQTT hacia las llamadas correspondientes de la biblioteca DroneLink, actuando como puente entre la interfaz Flutter y el autopiloto. 
+    \item {OE5 - Validación mediante SITL.}Validar el sistema completo mediante el simulador ArduPilot SITL (software In The Loop), confirmando la correcta ejecución de todos los comandos de vuelo y el control en tiempo real, antes de las pruebas con dron real.
+    \item {OE6 - Repositorio abierto a todos.}
+    Publicar un repositorio estructurado y públicamente accesible que contenga todas las demostraciones y el proyecto EZDrone final, organizado como recurso de referencia práctica para la comunidad.
+\end{itemize}
+
+\section{Plan de trabajo}
+El desarrollo de este proyecto se ha estructurado en una secuencia de tareas principales. A continuación se describe brevemente cada una de estas fases.
+\begin{itemize}
+    \item {Tarea 1 - Aplicación de control básico.}Implementación de la primera versión funcional del sistema: frontend Flutter backend Dart y estación tierra Python. Esta fase establece la arquitectura base, el modelo de gestión de estados con Provider y la cadena de comandos HTTP - MQTT - DronLink. La validación se realiza mediante SITL.
+    \item {Tarea 2 - Desarrollo de la colección de demostraciones.}Desarrollo de las demostraciones Flutter de forma secuencial e independiente, joystick virtuales, control por voz, control inercial mediante IMU, localización GPS en mapa, streaming de vídeo WebRTC con detección YOLO, planificación de misiones autónomas, registro y análisis de vuelos y finalmente catálogo de widgets (éste último se ha realizado al finalizar EZDrone). Cada demostración se documenta de forma autónoma e incluye instrucciones de integración.
+    \item {Tarea 3 - Evolución de la arquitectura de comunicación.}Eliminación del backend Dart como intermediario y conexión y comunicación. Incorporación de WebRTC para los canales de alta frecuencia (joysticks, telemetría, vídeo). Implementación y despliegue del servidor en servidores de la EETAC (dronseetac.upc.edu).
+    \item {Tarea 4 - Integración de las demostraciones en EZDrone.}
+    Integración de todos los paradigmas de las demostraciones en la web EZDrone, incluyendo también el soporte para los drones ArduPilot y Tello, no solo SITL. Implementación de las pantallas de vuelo en sus diferentes modos, planificación de misiones e historial de vuelos.
+    \item {Tarea 5 - Validación con SITL y dron real.}Validación del sistema completo mediante simulación SITL y pruebas reales con los dos drones, verificando el correcto comportamiento de todos los modos de control y la robustez de la comunicación.
+    \item {Tarea 6 - Redacción de la memoria y publicación de los repositorios.}Redacción de la memoria y estructuración y publicación del repositorio de demostraciones y del proyecto EZDrone, con documentación e instrucciones para futuros desarrolladores del ecosistema.
+\end{itemize}

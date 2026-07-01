@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:js_interop';
 import 'dart:math';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:web/web.dart' as web;
 
 // ============================================================
 // DEMO: FLIGHT PLAN - CREACIÓN DE MISIONES CON WAYPOINTS
@@ -200,10 +203,10 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
 
   // ------ Descarga del JSON ----------------------------------------------
   //
-  // En Flutter Web, la descarga se hace creando un elemento <a>
-  // con un blob URL y disparando un click programático.
-
-  // Aquí, para simplificar la demo, mostramos el JSON en un diálogo
+  // En Flutter Web la descarga se hace creando un Blob, generando una URL
+  // temporal y disparando un click sobre un <a download>. Fuera de Web
+  // (móvil/escritorio) no aplica ese mecanismo, así que se muestra el JSON
+  // en un diálogo como alternativa.
   void _downloadJson() {
     if (_waypoints.isEmpty) return;
     final plan = {
@@ -212,11 +215,28 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
       'waypoints': _waypoints.map((w) => w.toJson()).toList(),
     };
     final jsonStr = const JsonEncoder.withIndent('  ').convert(plan);
+    final filename = '${_planName.replaceAll(' ', '_')}.json';
 
-    // Flutter Web: inyecta un <a> con data URI y hace click
-    Uri.encodeComponent(jsonStr);
+    if (kIsWeb) {
+      _descargarWeb(jsonStr, 'application/json', filename);
+    } else {
+      // Sin descarga nativa en esta demo: mostramos el JSON para copiarlo.
+      _showJsonPreview(jsonStr);
+    }
+  }
 
-    _showJsonPreview(jsonStr);
+  // Descarga real en navegador: Blob → objectURL → <a download>.click().
+  void _descargarWeb(String contenido, String mime, String filename) {
+    final blob = web.Blob(
+      [contenido.toJS].toJS,
+      web.BlobPropertyBag(type: mime),
+    );
+    final url = web.URL.createObjectURL(blob);
+    web.HTMLAnchorElement()
+      ..href = url
+      ..download = filename
+      ..click();
+    web.URL.revokeObjectURL(url);
   }
 
   // Muestra el JSON generado en un diálogo con texto seleccionable

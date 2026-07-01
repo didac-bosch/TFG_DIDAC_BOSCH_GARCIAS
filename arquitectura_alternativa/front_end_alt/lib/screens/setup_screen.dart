@@ -1248,6 +1248,10 @@ void _showHelpSheet(BuildContext context) {
                   'LAND — smooth descent and motor stop',
                 ),
                 _HelpItem(
+                  Icons.videocam,
+                  'Camera on: 📷 capture photo · ⏺ record video',
+                ),
+                _HelpItem(
                   Icons.tune,
                   'MODES — opens the Flip, Follow and Orbit panel',
                 ),

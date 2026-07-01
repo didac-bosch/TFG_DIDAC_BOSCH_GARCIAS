@@ -1,5 +1,5 @@
 name: control_por_voz
-description: "A new Flutter project."
+description: "Demo: control de dron por voz en español con wake word y máquina de estados."
 publish_to: 'none'
 version: 0.1.0
 

@@ -1,10 +1,16 @@
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_browser_client.dart';
+import 'dart:async';
 import 'dart:math';
 
 class MqttLogic {
   late MqttBrowserClient _client;
   bool _clientInitialized = false;
+
+  // Suscripción al stream de updates: hay que guardarla para cancelarla en cada
+  // reconexión y en disconnect(); si no, cada connect() acumula un listener que
+  // puede emitir mensajes tardíos/duplicados al provider.
+  StreamSubscription? _updatesSub;
 
   // Topics actualmente suscritos en el cliente vivo
   final List<String> _subscribedTopics = [];
@@ -17,6 +23,8 @@ class MqttLogic {
     if (_clientInitialized) {
       try { _client.disconnect(); } catch (_) {}
     }
+    await _updatesSub?.cancel();
+    _updatesSub = null;
     _subscribedTopics.clear();
 
     // Generar un clientId único para evitar conflictos en el broker
@@ -38,10 +46,9 @@ class MqttLogic {
     _client.connectionMessage = connMessage;
 
     await _client.connect();
-    _clientInitialized = true;
 
     // Escuchar mensajes entrantes y procesarlos con el callback registrado
-    _client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> messages) {
+    _updatesSub = _client.updates!.listen((List<MqttReceivedMessage<MqttMessage>> messages) {
       for (final msg in messages) {
         final payload = MqttPublishPayload.bytesToStringAsString(
           (msg.payload as MqttPublishMessage).payload.message,
@@ -49,6 +56,8 @@ class MqttLogic {
         onMessageReceived?.call(msg.topic, payload);
       }
     });
+    // Marcar inicializado sólo cuando el listener ya está registrado.
+    _clientInitialized = true;
   }
 
   // Suscribe a un topic. Ignora si ya está suscrito (evita duplicados).
@@ -76,6 +85,8 @@ class MqttLogic {
   // Desconecta el cliente MQTT limpiamente, cancelando suscripciones y cerrando la conexión.
   void disconnect() {
     unsubscribeAll();
+    _updatesSub?.cancel();
+    _updatesSub = null;
     _client.disconnect();
     _clientInitialized = false;
   }

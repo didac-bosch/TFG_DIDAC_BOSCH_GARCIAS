@@ -1,5 +1,5 @@
 name: datos_inerciales
-description: "A new Flutter project."
+description: "Demo: lectura de orientación del móvil (pitch/roll/yaw) para el control IMU del dron."
 publish_to: 'none'
 version: 0.1.0
 
@@ -9,7 +9,6 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  sensors_plus: ^7.0.0
 
 dev_dependencies:
   flutter_test:

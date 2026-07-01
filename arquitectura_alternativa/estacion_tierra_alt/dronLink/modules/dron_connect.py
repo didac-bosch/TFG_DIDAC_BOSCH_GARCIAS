@@ -69,12 +69,15 @@ def _connect(self, connection_string, baud, callback=None, params=None):
     self.message_handler.register_handler('HEARTBEAT', self._handle_heartbeat)
     self.message_handler.register_handler('GLOBAL_POSITION_INT', self._record_telemetry_info)
     self.message_handler.register_handler('LOCAL_POSITION_NED', self._record_local_telemetry_info)
-    # activo el envío de todos los streams porque necesito los datos de bateria
+    # activo el envío de streams a baja frecuencia (2Hz) solo para datos lentos como la batería
+    # (SYS_STATUS). Antes era 10Hz, lo que competía con el SET_MESSAGE_INTERVAL de abajo y hacía
+    # irregular la cadencia de GLOBAL_POSITION_INT -> telemetría a saltos. Dejamos que el
+    # SET_MESSAGE_INTERVAL gobierne la posición a self.frequency de forma regular.
     self.vehicle.mav.request_data_stream_send(
         self.vehicle.target_system,
         self.vehicle.target_component,
         mavutil.mavlink.MAV_DATA_STREAM_ALL,
-        10,
+        2,
         1
     )
     self.message_handler.register_handler('SYS_STATUS', self._record_battery_info)

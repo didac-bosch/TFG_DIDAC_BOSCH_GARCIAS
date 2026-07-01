@@ -13,13 +13,23 @@ import 'dart:math';
 
 // Llamada a funciones JavaScript declaradas en el index.html relacionadas con la captura de pantalla
 @JS('captureDroneFrame')
-external void _jsCapture(String filename);
+external void _jsCapture(String id, String filename);
 
 @JS('startDroneRecording')
 external void _jsStartRecording();
 
 @JS('stopDroneRecording')
-external void _jsStopRecording(String filename);
+external void _jsStopRecording(String id, String filename);
+
+// Galería — almacenamiento de capturas/vídeos en IndexedDB
+@JS('ezInitMediaStore')
+external JSPromise<JSString> _jsInitMediaStore();
+
+@JS('ezGetMediaUrl')
+external String ezGetMediaUrl(String id);
+
+@JS('ezDeleteMedia')
+external void _jsDeleteMedia(String id);
 
 // Modos de control
 enum ControlMode { classic, voice, imu }
@@ -29,6 +39,52 @@ enum DetectionMode { all, person, none }
 
 // Modos de conexión al dron
 enum DroneConnectionMode { ardupilot, sitl, tello }
+
+// ------ GALERÍA -------------------
+// Metadata de una captura (foto o vídeo). El contenido real (blob) vive en
+// IndexedDB; aquí solo se persiste la metadata en localStorage.
+class MediaItem {
+  final String id; // = millisecondsSinceEpoch como String
+  final String type; // 'photo' | 'video'
+  final String filename;
+  final DateTime timestamp;
+  final double? lat;
+  final double? lon;
+  final double? alt;
+
+  MediaItem({
+    required this.id,
+    required this.type,
+    required this.filename,
+    required this.timestamp,
+    this.lat,
+    this.lon,
+    this.alt,
+  });
+
+  bool get isPhoto => type == 'photo';
+  bool get hasGps => lat != null && lon != null && (lat != 0.0 || lon != 0.0);
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'type': type,
+    'filename': filename,
+    'ts': timestamp.toIso8601String(),
+    'lat': lat,
+    'lon': lon,
+    'alt': alt,
+  };
+
+  factory MediaItem.fromJson(Map<String, dynamic> j) => MediaItem(
+    id: j['id'] as String,
+    type: j['type'] as String,
+    filename: j['filename'] as String,
+    timestamp: DateTime.parse(j['ts'] as String),
+    lat: (j['lat'] as num?)?.toDouble(),
+    lon: (j['lon'] as num?)?.toDouble(),
+    alt: (j['alt'] as num?)?.toDouble(),
+  );
+}
 
 // ------ FLIGHT LOG -------------------
 // Snapshot de telemetría — se guarda cada tick mientras el dron está volando
@@ -94,6 +150,9 @@ class FlightSession {
   final String controlMode;
   final bool completed; // true = aterrizó normal, false = desconexión en vuelo
   final bool isSitl;
+  // Refs (por id) a los MediaItem capturados durante este vuelo. La galería
+  // sigue siendo la fuente de la verdad; aquí solo guardamos punteros.
+  final List<String> mediaIds;
 
   FlightSession({
     required this.startTime,
@@ -102,6 +161,7 @@ class FlightSession {
     required this.controlMode,
     required this.completed,
     required this.isSitl,
+    this.mediaIds = const [],
   });
 
   Duration get duration => endTime.difference(startTime);
@@ -140,6 +200,7 @@ class FlightSession {
     'completed': completed,
     'log': log.map((s) => s.toJson()).toList(),
     'isSitl': isSitl,
+    'mediaIds': mediaIds,
   };
 
   factory FlightSession.fromJson(Map<String, dynamic> j) => FlightSession(
@@ -151,6 +212,8 @@ class FlightSession {
     log: (j['log'] as List)
         .map((s) => TelemetrySnapshot.fromJson(s as Map<String, dynamic>))
         .toList(),
+    mediaIds:
+        (j['mediaIds'] as List?)?.map((e) => e as String).toList() ?? const [],
   );
 }
 
@@ -315,6 +378,8 @@ class DronProvider extends ChangeNotifier {
   DronProvider() {
     _loadFlightHistory();
     _loadFlightPlans();
+    _loadMediaGallery();
+    _initMediaStore();
   }
 
   void setControlMode(ControlMode mode) {
@@ -377,6 +442,16 @@ class DronProvider extends ChangeNotifier {
 
   List<LatLng> droneTrail = [];
 
+  // Posición/orientación interpoladas para el render fluido del marcador del
+  // dron, independientes de la tasa de telemetría. Un timer hace lerp de estos
+  // valores hacia el último dato recibido (currentLat/currentLon/currentHeading)
+  // a 60 fps, de modo que el icono se desliza en lugar de saltar entre paquetes.
+  final ValueNotifier<LatLng> droneRenderPos = ValueNotifier(const LatLng(0, 0));
+  final ValueNotifier<double> droneRenderHeading = ValueNotifier(0.0);
+  Timer? _interpTimer;
+  LatLng _interpTarget = const LatLng(0, 0);
+  double _interpTargetHeading = 0.0;
+
   //posicionamiento usuario
   LatLng? userPosition;
   double userAccuracy = 0;
@@ -397,6 +472,9 @@ class DronProvider extends ChangeNotifier {
 
   bool _waitingForArm = false;
   bool _armConfirmed = false;
+  // Esperando confirmación de aterrizaje tras pulsar LAND. Si la ET no confirma
+  // (reafirma 'flying'), avisamos al usuario de que el dron sigue en el aire.
+  bool _waitingForLand = false;
 
   //timer y valores del joystick
   Timer? _joystickTimer;
@@ -408,16 +486,21 @@ class DronProvider extends ChangeNotifier {
   // Lista de sesiones completadas (más reciente primero)
   final List<FlightSession> flightHistory = [];
   final List<FlightPlan> flightPlans = [];
+  final List<MediaItem> mediaGallery = [];
   bool missionUploaded = false;
   bool isMissionMode = false;
   int activeMissionWaypoint = -1;
   String? currentMissionPlanId;
   List<TelemetrySnapshot> _sessionLog = [];
   DateTime? _sessionStart;
+  // Ids de medios capturados durante la sesión activa (volcados al cerrarla)
+  List<String> _sessionMediaIds = [];
   bool _pendingMissionFlight = false;
 
   bool _connectingInProgress = false;
   Timer? _connectionTimeoutTimer;
+  // Auto-stop de la grabación iniciada por una acción recordVideo de la misión.
+  Timer? _missionRecordTimer;
 
   void setAltitude(String altValue) {
     final alt = double.tryParse(altValue.replaceAll(',', '.'));
@@ -454,6 +537,17 @@ class DronProvider extends ChangeNotifier {
     if (ry != null) _ry = ry;
   }
 
+  // Parado de emergencia — neutraliza todos los ejes a 0. El timer (50 ms)
+  // envía {0,0,0,0} de forma continua, dejando el dron en hover en el sitio.
+  void emergencyStop() {
+    _lx = 0;
+    _ly = 0;
+    _rx = 0;
+    _ry = 0;
+    message = 'STOP';
+    notifyListeners();
+  }
+
   void _startJoystickTimer() {
     _joystickTimer = Timer.periodic(
       const Duration(milliseconds: 50),
@@ -467,9 +561,61 @@ class DronProvider extends ChangeNotifier {
     _webrtc.sendJoystick(0, 0, 0, 0);
   }
 
+  // Fija el nuevo objetivo de render (llamado en cada paquete de telemetría) y
+  // arranca el timer de interpolación si hace falta.
+  void _updateInterpTarget() {
+    if (currentLat == 0.0 && currentLon == 0.0) return;
+    _interpTarget = LatLng(currentLat, currentLon);
+    _interpTargetHeading = currentHeading;
+    // Primer dato válido: saltar directamente para no animar desde (0,0).
+    final cur = droneRenderPos.value;
+    if (cur.latitude == 0.0 && cur.longitude == 0.0) {
+      droneRenderPos.value = _interpTarget;
+      droneRenderHeading.value = _interpTargetHeading;
+      return;
+    }
+    _startInterpTimer();
+  }
+
+  void _startInterpTimer() {
+    if (_interpTimer != null) return;
+    _interpTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      const t = 0.25; // factor de suavizado por frame
+      final cur = droneRenderPos.value;
+      final dLat = _interpTarget.latitude - cur.latitude;
+      final dLon = _interpTarget.longitude - cur.longitude;
+      // heading: interpolar por el camino angular más corto
+      double dHdg = _interpTargetHeading - droneRenderHeading.value;
+      while (dHdg > 180) {
+        dHdg -= 360;
+      }
+      while (dHdg < -180) {
+        dHdg += 360;
+      }
+
+      // Suficientemente cerca (~1 cm y 0.5°): fijar y parar para no gastar ciclos.
+      if (dLat.abs() < 1e-7 && dLon.abs() < 1e-7 && dHdg.abs() < 0.5) {
+        droneRenderPos.value = _interpTarget;
+        droneRenderHeading.value = _interpTargetHeading;
+        _stopInterpTimer();
+        return;
+      }
+      droneRenderPos.value =
+          LatLng(cur.latitude + dLat * t, cur.longitude + dLon * t);
+      droneRenderHeading.value =
+          (droneRenderHeading.value + dHdg * t) % 360;
+    });
+  }
+
+  void _stopInterpTimer() {
+    _interpTimer?.cancel();
+    _interpTimer = null;
+  }
+
   void _startSession() {
     if (_sessionStart != null) return;
     _sessionLog = [];
+    _sessionMediaIds = [];
     _sessionStart = DateTime.now();
   }
 
@@ -478,6 +624,7 @@ class DronProvider extends ChangeNotifier {
     if (_sessionLog.isEmpty) {
       _sessionStart = null;
       _sessionLog = [];
+      _sessionMediaIds = [];
       return;
     }
     flightHistory.insert(
@@ -489,11 +636,13 @@ class DronProvider extends ChangeNotifier {
         controlMode: selectedMode.name,
         completed: completed,
         isSitl: droneConnectionMode == DroneConnectionMode.sitl,
+        mediaIds: List.from(_sessionMediaIds),
       ),
     );
     if (flightHistory.length > 50) flightHistory.removeLast();
     _saveFlightHistory();
     _sessionLog = [];
+    _sessionMediaIds = [];
     _sessionStart = null;
   }
 
@@ -571,6 +720,84 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  void clearAllFlightPlans() {
+    flightPlans.clear();
+    _saveFlightPlans();
+    notifyListeners();
+  }
+
+  // ----------------------- GALERÍA -----------------------------------------
+  void _loadMediaGallery() {
+    try {
+      final stored = web.window.localStorage.getItem('ezdrone_media_gallery');
+      if (stored != null && stored.isNotEmpty) {
+        final list = jsonDecode(stored) as List;
+        mediaGallery.clear();
+        mediaGallery.addAll(
+          list.map((j) => MediaItem.fromJson(j as Map<String, dynamic>)),
+        );
+      }
+    } catch (_) {}
+  }
+
+  void _saveMediaGallery() {
+    try {
+      web.window.localStorage.setItem(
+        'ezdrone_media_gallery',
+        jsonEncode(mediaGallery.map((m) => m.toJson()).toList()),
+      );
+    } catch (_) {}
+  }
+
+  // Reconstruye los object URLs de los blobs guardados en IndexedDB.
+  // Las URLs se regeneran en cada arranque (window._ezMediaUrls), por lo que
+  // hay que avisar a la UI cuando estén listas.
+  Future<void> _initMediaStore() async {
+    try {
+      await _jsInitMediaStore().toDart;
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  void deleteMediaItem(String id) {
+    _jsDeleteMedia(id);
+    mediaGallery.removeWhere((m) => m.id == id);
+    _saveMediaGallery();
+    notifyListeners();
+  }
+
+  void clearMediaGallery() {
+    for (final m in mediaGallery) {
+      _jsDeleteMedia(m.id);
+    }
+    mediaGallery.clear();
+    _saveMediaGallery();
+    notifyListeners();
+  }
+
+  void _registerMedia(String id, String type, String filename) {
+    mediaGallery.insert(
+      0,
+      MediaItem(
+        id: id,
+        type: type,
+        filename: filename,
+        timestamp: DateTime.now(),
+        lat: isFlying ? currentLat : null,
+        lon: isFlying ? currentLon : null,
+        alt: isFlying ? currentAlt : null,
+      ),
+    );
+    // Si se captura durante un vuelo loggeable (no Tello), enlazar a la sesión
+    // activa para que también aparezca en el Flight Log de ese vuelo.
+    if (isFlying &&
+        _sessionStart != null &&
+        droneConnectionMode != DroneConnectionMode.tello) {
+      _sessionMediaIds.add(id);
+    }
+    _saveMediaGallery();
+  }
+
   Future<void> uploadMission(FlightPlan plan) async {
     currentMissionPlanId = plan.id;
     if (!isConnected) return;
@@ -637,6 +864,9 @@ class DronProvider extends ChangeNotifier {
       _mqtt.subscribe(Constants.topicMissionUploaded);
       _mqtt.subscribe(Constants.topicMissionStarted);
       _mqtt.subscribe(Constants.topicMissionWaypoint);
+      _mqtt.subscribe(Constants.topicCameraAction);
+      _mqtt.subscribe(Constants.topicFollowModeStatus);
+      _mqtt.subscribe(Constants.topicOrbitStatus);
       _mqtt.onMessageReceived = _handleMessage;
       _mqtt.onDisconnected = _handleMqttDisconnected;
 
@@ -733,6 +963,11 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
 
     _stopJoystickTimer();
+    _stopInterpTimer();
+    droneRenderPos.value = const LatLng(0, 0);
+    droneRenderHeading.value = 0.0;
+    _interpTarget = const LatLng(0, 0);
+    _interpTargetHeading = 0.0;
     _locationSub?.cancel();
     _locationSub = null;
 
@@ -754,6 +989,7 @@ class DronProvider extends ChangeNotifier {
     isFlying = false;
     isLoading = false;
     isVideoActive = false;
+    _missionRecordTimer?.cancel();
     isRecording = false;
     isFollowMode = false;
     isOrbitMode = false;
@@ -808,6 +1044,7 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
 
     _stopJoystickTimer();
+    _waitingForLand = true;
     _mqtt.publish(Constants.topicLand, 'land');
     isLoading = false;
     notifyListeners();
@@ -846,8 +1083,10 @@ class DronProvider extends ChangeNotifier {
 
   // -----------------------CAPTURA DE FOTO----------------------------------
   void capturePhoto() {
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    _jsCapture('drone_capture_$ts.png');
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final filename = 'drone_capture_$id.png';
+    _jsCapture(id, filename);
+    _registerMedia(id, 'photo', filename);
     message = '!Photo saved!';
     notifyListeners();
   }
@@ -864,8 +1103,10 @@ class DronProvider extends ChangeNotifier {
   // -----------------------PARAR GRABACIÓN DE VÍDEO----------------------------------
   void stopRecording() {
     if (!isRecording) return;
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    _jsStopRecording('dronevideo$ts.mp4');
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final filename = 'dronevideo$id.mp4';
+    _jsStopRecording(id, filename);
+    _registerMedia(id, 'video', filename);
     isRecording = false;
     message = '!Video saved!';
     notifyListeners();
@@ -886,13 +1127,15 @@ class DronProvider extends ChangeNotifier {
   }
 
   // -----------------------MODO ORBIT----------------------------------
-  void startOrbit({required int radiusCm, required bool clockwise}) {
+  void startOrbit({required bool clockwise}) {
     if (!isConnected || !isFlying || isOrbitMode) return;
     isOrbitMode = true;
     // La ET reinicia Follow como Orbit; reflejarlo aquí para coherencia de UI.
     isFollowMode = false;
     _stopJoystickTimer();
-    final payload = '$radiusCm:${clockwise ? "cw" : "ccw"}';
+    // Radio automático: la ET captura la distancia ToF actual a la persona.
+    // El payload sólo lleva la dirección ("cw"/"ccw").
+    final payload = clockwise ? 'cw' : 'ccw';
     _mqtt.publish(Constants.topicOrbit, payload);
     notifyListeners();
   }
@@ -902,7 +1145,10 @@ class DronProvider extends ChangeNotifier {
     if (!isConnected || !isOrbitMode) return;
     isOrbitMode = false;
     if (isFlying) _mqtt.publish(Constants.topicOrbit, 'stop');
-    _startJoystickTimer();
+    // Sólo reactivar el joystick si seguimos en vuelo y NO en follow: arrancarlo
+    // en follow contradiría la semántica (el timer debe estar parado) y enviaría
+    // comandos de joystick mientras el dron sigue a la persona.
+    if (isFlying && !isFollowMode) _startJoystickTimer();
     notifyListeners();
   }
 
@@ -911,6 +1157,13 @@ class DronProvider extends ChangeNotifier {
     if (!isConnected || !isFlying ) return;
     isFollowMode = !isFollowMode;
     if (isFollowMode) {
+      // Si había una órbita activa, cerrarla: startOrbit() limpia isFollowMode al
+      // entrar, pero la inversa no estaba implementada → la UI mostraba ambos
+      // modos activos y un stopOrbit() posterior reactivaba el joystick.
+      if (isOrbitMode) {
+        isOrbitMode = false;
+        _mqtt.publish(Constants.topicOrbit, 'stop');
+      }
       _lx = 0.0;
       _ly = 0.0;
       _rx = 0.0;
@@ -933,7 +1186,18 @@ class DronProvider extends ChangeNotifier {
   void _handleMqttDisconnected() {
     if (!isConnected) return; // desconexión durante el intento de conexión — ya gestionada
     isConnected = false;
-    _joystickTimer?.cancel();
+    // Limpieza completa: cancelar timers (joystick + interpolación), cerrar la
+    // sesión de vuelo y resetear los flags de vuelo/modo. Antes sólo se cancelaba
+    // _joystickTimer, dejando isFlying/isFollowMode/isOrbitMode y el timer de
+    // interpolación activos sobre un canal ya muerto.
+    _stopJoystickTimer();
+    _stopInterpTimer();
+    _endSession(completed: false);
+    isFlying = false;
+    isArmed = false;
+    isLoading = false;
+    isFollowMode = false;
+    isOrbitMode = false;
     message = 'MQTT connection lost — commands unavailable';
     notifyListeners();
   }
@@ -980,9 +1244,14 @@ class DronProvider extends ChangeNotifier {
 
     // --------------- TOPIC FLYING ---------------
     if (topic == Constants.topicFlying) {
+      // Si estábamos esperando un aterrizaje y la ET reafirma 'flying', el
+      // aterrizaje NO se confirmó: el dron sigue en el aire. Avisamos y
+      // devolvemos el control (joystick) para que el usuario reintente LAND.
+      final bool landFailed = _waitingForLand && isFlying;
+      _waitingForLand = false;
       isFlying = true;
       isMissionMode = missionUploaded;
-      message = 'Flying';
+      message = landFailed ? 'Aterrizaje no confirmado, reintenta' : 'Flying';
       _startSession();
       if (!_pendingMissionFlight && !isMissionMode) _startJoystickTimer();
       _pendingMissionFlight = false;
@@ -993,6 +1262,15 @@ class DronProvider extends ChangeNotifier {
     // --------------- TOPIC LANDED ---------------
     if (topic == Constants.topicLanded) {
       _endSession(completed: true);
+      // Parar el joystick timer: si el aterrizaje lo inicia la ET (batería baja,
+      // geofence, RTL) en vez del usuario, land() no se ejecuta y el timer
+      // seguiría enviando comandos con el dron ya en tierra.
+      _stopJoystickTimer();
+      // Si una grabación de misión sigue activa al aterrizar (misión abortada
+      // antes de cumplir los N s), la cerramos para no dejarla colgada.
+      _missionRecordTimer?.cancel();
+      if (isRecording) stopRecording();
+      _waitingForLand = false;
       isFlying = false;
       isArmed = false;
       _armConfirmed = false;
@@ -1039,9 +1317,67 @@ class DronProvider extends ChangeNotifier {
       return;
     }
 
+    // --------------- TOPIC CAMERA ACTION (misión) ---------------
+    // La ET pide capturar al alcanzar un waypoint con acción takePhoto/recordVideo.
+    // Reutiliza el mismo mecanismo manual: capturePhoto / startRecording / stopRecording.
+    if (topic == Constants.topicCameraAction) {
+      if (payload == 'photo') {
+        capturePhoto();
+      } else if (payload.startsWith('record:')) {
+        final secs = int.tryParse(payload.substring(7)) ?? 5;
+        if (!isRecording) {
+          startRecording();
+          // La ET espera 'secs' en el waypoint; paramos la grabación al cumplirse.
+          _missionRecordTimer?.cancel();
+          _missionRecordTimer = Timer(Duration(seconds: secs), () {
+            if (isRecording) stopRecording();
+          });
+        }
+      }
+      return;
+    }
+
+    // --------------- TOPIC FOLLOW MODE STATUS ---------------
+    // Confirmación autoritativa de la ET: 'on' activó follow, 'off' rechazó o
+    // desactivó. Si la ET rechaza (dron no volando, error), reseteamos el flag
+    // optimista para que la UI no quede mostrando un modo que no arrancó.
+    if (topic == Constants.topicFollowModeStatus) {
+      final on = payload == 'on';
+      if (on != isFollowMode) {
+        isFollowMode = on;
+        if (on) {
+          _stopJoystickTimer();
+        } else if (isFlying && !isOrbitMode) {
+          _startJoystickTimer();
+        }
+        notifyListeners();
+      }
+      return;
+    }
+
+    // --------------- TOPIC ORBIT STATUS ---------------
+    if (topic == Constants.topicOrbitStatus) {
+      final on = payload == 'on';
+      if (on != isOrbitMode) {
+        isOrbitMode = on;
+        if (on) {
+          _stopJoystickTimer();
+        } else if (isFlying && !isFollowMode) {
+          _startJoystickTimer();
+        }
+        notifyListeners();
+      }
+      return;
+    }
+
     // --------------- TOPIC DISCONNECTED ---------------
     if (topic == Constants.topicDisconnected) {
       _endSession(completed: false);
+      // Parar timers antes de limpiar estado: si llega 'disconnected' durante un
+      // vuelo activo (crash, pérdida de ET), ambos timers seguirían corriendo
+      // sobre un canal WebRTC ya cerrado e interpolando posiciones congeladas.
+      _stopJoystickTimer();
+      _stopInterpTimer();
       isConnected = false;
       isArmed = false;
       isFlying = false;
@@ -1109,6 +1445,8 @@ class DronProvider extends ChangeNotifier {
         droneTrail.add(LatLng(currentLat, currentLon));
         if (droneTrail.length > 1000) droneTrail.removeAt(0);
       }
+      // Actualiza el objetivo del marcador interpolado (render fluido).
+      _updateInterpTarget();
       if (isFlying && _sessionStart != null && currentLat != 0.0) {
         _sessionLog.add(
           TelemetrySnapshot(

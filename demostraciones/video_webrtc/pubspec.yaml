@@ -1,5 +1,5 @@
 name: video_webrtc
-description: "A new Flutter project."
+description: "Demo: vídeo en directo por WebRTC con detección YOLO y captura/grabación en el cliente."
 publish_to: 'none'
 version: 0.1.0
 

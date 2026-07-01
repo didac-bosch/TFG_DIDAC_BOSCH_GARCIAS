@@ -11,6 +11,10 @@ const String _remoteId = 'python';
 class WebRTCLogic {
   RTCPeerConnection? _pc;
   WebSocketChannel? _ws;
+  // Suscripción al stream del WebSocket: guardarla para cancelarla en
+  // disconnect(); si no, el handler async sigue vivo y puede llamar
+  // _handleSignaling sobre _pc ya null.
+  StreamSubscription? _wsSub;
   RTCDataChannel? _joystickChannel;
   RTCDataChannel? _telemetryChannel;
   Function(MediaStream)? onRemoteStream;
@@ -29,7 +33,7 @@ class WebRTCLogic {
     final iceCompleter = Completer<Map<String, dynamic>>();
 
     // Único listener para todos los mensajes
-    _ws!.stream.listen((message) async {
+    _wsSub = _ws!.stream.listen((message) async {
       final data = jsonDecode(message as String) as Map<String, dynamic>;
 
       // ice_config llega primero, crea la PeerConnection
@@ -107,15 +111,22 @@ class WebRTCLogic {
   }
 
   Future<void> _handleSignaling(Map<String, dynamic> data) async {
+    // Capturar referencias locales: el listener es async y puede estar en vuelo
+    // cuando disconnect() pone _pc/_ws a null entre dos awaits → NPE. Usando las
+    // locales, si ya se desconectó, simplemente se aborta.
+    final pc = _pc;
+    final ws = _ws;
+    if (pc == null || ws == null) return;
+
     //flutter recibe la offer de la ET y envía la answer para el signaling
     if (data['type'] == 'offer') {
       final offer = data['offer'] as Map;
-      await _pc!.setRemoteDescription(
+      await pc.setRemoteDescription(
         RTCSessionDescription(offer['sdp'], offer['type']),
       );
-      final answer = await _pc!.createAnswer();
-      await _pc!.setLocalDescription(answer);
-      _ws!.sink.add(
+      final answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      ws.sink.add(
         jsonEncode({
           'target': _remoteId,
           'type': 'answer',
@@ -128,7 +139,7 @@ class WebRTCLogic {
       final cand = data['candidate'] as Map?;
       if (cand == null) return;
       try {
-        await _pc!.addCandidate(
+        await pc.addCandidate(
           RTCIceCandidate(
             cand['candidate'],
             cand['sdpMid'],
@@ -157,6 +168,9 @@ class WebRTCLogic {
   Future<void> disconnect() async {
     _pcReady = false;
     _msgQueue.clear();
+
+    await _wsSub?.cancel();
+    _wsSub = null;
 
     try {
       await _pc?.close();

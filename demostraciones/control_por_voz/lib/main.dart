@@ -5,51 +5,52 @@ import 'package:speech_to_text/speech_recognition_result.dart';
 
 
 // ============================================================
-// DEMO: CONTROL DE DRON POR VOZ CON WAKE WORD
+// DEMO: CONTROL DE DRON POR VOZ 
 // ============================================================
 //
 // LIBRERÍA:
-//   - speech_to_text: ^6.6.2 → puente con el motor nativo
-//       · iOS/macOS → Siri/Apple
-//       · Android   → Google
+//   - speech_to_text: ^7.3.0 - puente con el motor nativo
+//       · iOS/macOS - Siri
+//       · Android   - Google
 //
 // PERMISOS NECESARIOS:
-//   iOS    → ios/Runner/Info.plist:
+//   iOS    - ios/Runner/Info.plist:
 //              NSMicrophoneUsageDescription
 //              NSSpeechRecognitionUsageDescription
-//   macOS  → macos/Runner/Info.plist: (igual que iOS)
+//   macOS  - macos/Runner/Info.plist: (igual que iOS)
 //            macos/Runner/DebugProfile.entitlements y Release.entitlements:
 //              com.apple.security.device.microphone
 //              com.apple.security.device.audio-input
-//   Android → android/app/src/main/AndroidManifest.xml:
+//   Android - android/app/src/main/AndroidManifest.xml:
 //              RECORD_AUDIO, INTERNET, BLUETOOTH, BLUETOOTH_ADMIN
 //              + <queries> RecognitionService si targetSdk >= 30
 //
 // FUNCIONAMIENTO:
-//   1. Pulsar botón → escucha activa con timer de 10s
-//   2. Cualquier voz detectada → resetea el timer de 10s
-//   3. Silencio de 10s sin comandos → se apaga automáticamente
-//   4. "dron" detectado → espera comando (timer sigue activo)
-//   5. "dron" + comando detectado → ejecuta al instante,
+//   1. Pulsar botón - escucha activa con timer de 10s
+//   2. Cualquier voz detectada - resetea el timer de 10s
+//   3. Silencio de 10s sin comandos - se apaga automáticamente
+//   4. "dron" detectado - espera comando (timer sigue activo)
+//   5. "dron" + comando detectado - ejecuta al instante,
 //      se queda encendido indefinidamente hasta stop manual
 //
 // ESTADOS:
-//   idle            → apagado
-//   waitingWakeWord → escuchando, timer activo, esperando "dron"
-//   waitingCommand  → "dron" detectado, esperando comando
-//   commandLocked   → comando ejecutado, encendido permanente
+//   idle            - apagado
+//   waitingWakeWord - escuchando, timer activo, esperando "dron"
+//   waitingCommand  - "dron" detectado, esperando comando
+//   commandLocked   - comando ejecutado, encendido permanente
 //
 // COMANDOS RECONOCIDOS:
-//   "armar"            → ARMAR
-//   "despegar"         → DESPEGAR
-//   "subir"            → SUBIR
-//   "bajar"            → BAJAR
-//   "mover derecha"    → MOVER DERECHA
-//   "mover izquierda"  → MOVER IZQUIERDA
-//   "mover adelante"   → MOVER ADELANTE
-//   "mover atrás"      → MOVER ATRÁS
-//   "aterrizar"        → ATERRIZAR
-//   "volver a despegue"→ VOLVER A DESPEGUE
+//   "armar"            - ARMAR
+//   "despegar"         - DESPEGAR
+//   "subir"            - SUBIR
+//   "bajar"            - BAJAR
+//   "mover derecha"    - MOVER DERECHA
+//   "mover izquierda"  - MOVER IZQUIERDA
+//   "mover adelante"   - MOVER ADELANTE
+//   "mover atrás"      - MOVER ATRÁS
+//   "aterrizar"        - ATERRIZAR
+//   "volver a despegue"- VOLVER A DESPEGUE
+//
 // ============================================================
 
 
@@ -70,10 +71,10 @@ class MyApp extends StatelessWidget {
 
 
 // Máquina de estados del sistema de escucha. Define en qué fase está la app en cada momento:
-//   idle            → apagado, no escucha nada
-//   waitingWakeWord → escuchando, esperando que el usuario diga "dron"
-//   waitingCommand  → "dron" detectado, esperando el comando concreto
-//   commandLocked   → comando ejecutado, sigue escuchando indefinidamente
+//   idle            - apagado, no escucha nada
+//   waitingWakeWord - escuchando, esperando que el usuario diga "dron"
+//   waitingCommand  - "dron" detectado, esperando el comando concreto
+//   commandLocked   - comando ejecutado, sigue escuchando indefinidamente
 enum ListenState { idle, waitingWakeWord, waitingCommand, commandLocked }
 
 
@@ -87,7 +88,7 @@ class VoiceControlScreen extends StatefulWidget {
 class _VoiceControlScreenState extends State<VoiceControlScreen> {
   final SpeechToText _speech = SpeechToText();
 
-
+  // VARIABLES DE ESTADO
   bool _isAvailable = false;                    // Si el dispositivo soporta reconocimiento de voz
   ListenState _listenState = ListenState.idle;  // Estado actual de la máquina de estados
   String _rawText = '';                         // Texto que va transcribiendo el motor en tiempo real
@@ -195,7 +196,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
       onResult: _onResult,
       localeId: 'es_ES',
       listenFor: const Duration(seconds: 30),
-      pauseFor: const Duration(seconds: 4),  // era 2s, aumentado para no cortar entre palabras
+      pauseFor: const Duration(seconds: 4),  // para no cortar entre palabras
     );
   }
 
@@ -275,7 +276,8 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
   }
 
 
-  bool _hasValidCommand(String text) {  //commandos válidos
+  // lista de comandos válidos, si no está en esta lista no hace nada
+  bool _hasValidCommand(String text) { 
     return text.contains('armar') ||
            text.contains('despegar') ||
            text.contains('mover derecha') ||
@@ -290,7 +292,7 @@ class _VoiceControlScreenState extends State<VoiceControlScreen> {
            text.contains('volver al despegue');
   }
 
-
+  // Identifica el comando y actualiza la pantalla con el nombre, icono y color correspondiente
   void _identifyCommand(String text) {    //identificadores comandos
     if (text.contains('armar')) {
       _setCommand('ARMAR', Icons.build, Colors.orange);

@@ -20,15 +20,46 @@ class TelloFlightScreen extends StatefulWidget {
 
 class _TelloFlightScreenState extends State<TelloFlightScreen> {
   _TelloMode _activeMode = _TelloMode.none;
+  // Flags previos del provider: distinguen "modo nunca iniciado" (flag siempre
+  // false, esperando START) de "modo activo reseteado por la ET" (true→false).
+  bool _prevFollow = false;
+  bool _prevOrbit = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       final p = context.read<DronProvider>();
-      if (p.isFollowMode) setState(() => _activeMode = _TelloMode.follow);
-      if (p.isOrbitMode) setState(() => _activeMode = _TelloMode.orbit);
+      // Precedencia explícita en una sola asignación: con dos setState, si ambos
+      // flags estuvieran true el segundo pisaba al primero.
+      final mode = p.isOrbitMode
+          ? _TelloMode.orbit
+          : p.isFollowMode
+              ? _TelloMode.follow
+              : _TelloMode.none;
+      if (mode != _TelloMode.none) setState(() => _activeMode = mode);
     });
+  }
+
+  // Reconcilia el estado local con el provider: si la ET resetea follow/orbit
+  // (topicLanded, topicDisconnected, batería…), _activeMode quedaría mostrando
+  // un panel que ya no corresponde. El flip es puramente local y no se toca.
+  void _reconcileMode(DronProvider p) {
+    // Cerrar el panel SOLO en transición activo→inactivo (la ET reseteó un modo
+    // que estaba en marcha: land/disconnect/batería). Si el flag lleva en false
+    // esperando que el usuario pulse START, el panel debe permanecer abierto.
+    final followReset =
+        _activeMode == _TelloMode.follow && _prevFollow && !p.isFollowMode;
+    final orbitReset =
+        _activeMode == _TelloMode.orbit && _prevOrbit && !p.isOrbitMode;
+    if (followReset || orbitReset) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) setState(() => _activeMode = _TelloMode.none);
+      });
+    }
+    _prevFollow = p.isFollowMode;
+    _prevOrbit = p.isOrbitMode;
   }
 
   void _toggleMode(_TelloMode mode) {
@@ -40,6 +71,7 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
+    _reconcileMode(provider);
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;
     final isPortrait = screenH > screenW;
@@ -455,19 +487,6 @@ class _TelemetryPill extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
-          if (provider.telloWifi != null) ...[
-            _div(),
-            Icon(Icons.wifi, color: Colors.white70, size: 12),
-            const SizedBox(width: 2),
-            Text(
-              '${provider.telloWifi}',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
           _div(),
           Text(
             'HS ',
@@ -494,30 +513,6 @@ class _TelemetryPill extends StatelessWidget {
               fontWeight: FontWeight.bold,
             ),
           ),
-          if (provider.telloTempC != null) ...[
-            _div(),
-            Icon(Icons.thermostat, color: Colors.white54, size: 12),
-            Text(
-              '${provider.telloTempC!.toStringAsFixed(0)}°',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-          if (provider.telloFlightTime != null) ...[
-            _div(),
-            Icon(Icons.timer_outlined, color: Colors.white54, size: 12),
-            Text(
-              '${provider.telloFlightTime}s',
-              style: const TextStyle(
-                color: Colors.white,
-                fontSize: 11,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -663,8 +658,6 @@ class _OrbitButtons extends StatefulWidget {
 }
 
 class _OrbitButtonsState extends State<_OrbitButtons> {
-  double _radiusCm = 60;
-
   @override
   Widget build(BuildContext context) {
     final bool enabled = widget.provider.isFlying;
@@ -728,10 +721,8 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
               label: 'CCW',
               enabled: enabled && !isRunning,
               color: AppColors.warning,
-              onTap: () => context.read<DronProvider>().startOrbit(
-                radiusCm: _radiusCm.toInt(),
-                clockwise: false,
-              ),
+              onTap: () =>
+                  context.read<DronProvider>().startOrbit(clockwise: false),
             ),
             const SizedBox(width: 10),
             _ActionBtn(
@@ -747,50 +738,21 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
               label: 'CW',
               enabled: enabled && !isRunning,
               color: AppColors.warning,
-              onTap: () => context.read<DronProvider>().startOrbit(
-                radiusCm: _radiusCm.toInt(),
-                clockwise: true,
-              ),
+              onTap: () =>
+                  context.read<DronProvider>().startOrbit(clockwise: true),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        SizedBox(
-          width: 220,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                'RADIUS: ${_radiusCm.toInt()} cm',
-                style: const TextStyle(
-                  color: AppColors.warning,
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: 1.0,
-                ),
-              ),
-              SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  activeTrackColor: AppColors.warning,
-                  inactiveTrackColor: AppColors.warning.withValues(alpha: 0.2),
-                  thumbColor: AppColors.warning,
-                  overlayColor: AppColors.warning.withValues(alpha: 0.15),
-                  trackHeight: 2,
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 6,
-                  ),
-                ),
-                child: Slider(
-                  value: _radiusCm,
-                  min: 30,
-                  max: 200,
-                  divisions: 17,
-                  onChanged: isRunning
-                      ? null
-                      : (v) => setState(() => _radiusCm = v),
-                ),
-              ),
-            ],
+        // Radio automático: la ET fija la distancia de órbita con el ToF del
+        // dron a la persona; ya no hay slider de radio manual.
+        const Text(
+          'Radio automático (distancia actual)',
+          style: TextStyle(
+            color: AppColors.warning,
+            fontSize: 9,
+            fontWeight: FontWeight.bold,
+            letterSpacing: 1.0,
           ),
         ),
       ],

@@ -22,11 +22,13 @@
 //                              _formatDate
 // ===========================================================================
 
+import 'dart:js_interop';
 import 'dart:math';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:web/web.dart' as web;
 import 'sample_flight_data.dart';
 
 // -----COLORES -------------------------------
@@ -410,25 +412,34 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   // Dispara la descarga del CSV en el navegador mediante un <a> temporal.
   // En EZDrone real este helper se llama downloadCSVEZ() y está en fullscreen.dart.
   void _downloadCSV() {
-    if (!kIsWeb) return;
     final csv = _buildCSV();
     final dateStr = widget.session.startTime
         .toIso8601String()
         .substring(0, 19)
         .replaceAll(':', '-');
-    final encoded = Uri.encodeComponent(csv);
-    final dataHref = 'data:text/csv;charset=utf-8,$encoded';
-    // Inyección de <a> temporal — equivale a downloadCSVEZ() en EZDrone
-    _triggerAnchorDownload(dataHref, 'flight_$dateStr.csv');
+    final filename = 'flight_$dateStr.csv';
+
+    if (kIsWeb) {
+      _descargarWeb(csv, 'text/csv;charset=utf-8', filename);
+    } else {
+      // Sin descarga nativa en esta demo: mostramos el CSV para copiarlo.
+      _showCSVDialog(csv);
+    }
   }
 
-  void _triggerAnchorDownload(String href, String filename) {
-    // En EZDrone se usa dart:js_interop / web package. Aquí usamos eval mínimo.
-    try {
-      final _ = Uri.parse(href); // valida que el URI es correcto
-      // La descarga real se delega al helper de EZDrone en producción.
-      _showCSVDialog(_buildCSV());
-    } catch (_) {}
+  // Descarga real en navegador: Blob → objectURL → <a download>.click().
+  // Equivale a downloadCSVEZ() de EZDrone (dart:js_interop + package:web).
+  void _descargarWeb(String contenido, String mime, String filename) {
+    final blob = web.Blob(
+      [contenido.toJS].toJS,
+      web.BlobPropertyBag(type: mime),
+    );
+    final url = web.URL.createObjectURL(blob);
+    web.HTMLAnchorElement()
+      ..href = url
+      ..download = filename
+      ..click();
+    web.URL.revokeObjectURL(url);
   }
 
   // Fallback: muestra el CSV en un diálogo con texto seleccionable.

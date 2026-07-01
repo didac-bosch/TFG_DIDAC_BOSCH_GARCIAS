@@ -1,5 +1,5 @@
 name: ubicacion_mapa
-description: "A new Flutter project."
+description: "Demo: ubicación GPS en tiempo real sobre mapa OpenStreetMap con indicador de precisión."
 publish_to: 'none'
 version: 0.1.0
 

@@ -6,6 +6,7 @@ import json
 import asyncio
 import fractions
 import ssl
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import cv2
 import numpy as np
@@ -36,6 +37,11 @@ SIGNAL_URL = 'wss://dronseetac.upc.edu:8105/ws'
 
 MY_ID = 'python'
 REMOTE_ID = 'browser'
+
+# --- Suavizado del joystick (Tello) ---
+MANUAL_DEADZONE = 0.1        # zona muerta del stick
+MANUAL_EXPO = 1.5            # curva expo (suaviza la zona central)
+MANUAL_MAX_SPEED_PCT = 0.6   # tope de velocidad: fondo de escala = 60 (de 100)
 
 # ============================================================
 # CONFIGURACION DINAMICA
@@ -98,13 +104,23 @@ model.eval()
 if DEVICE == 'cuda':
     model = model.cuda()
 
-# modelo yolo para tello (detecta poses)
+# modelo yolo para tello (detecta poses + follow/orbit con re-ID)
+# Antes era 'yolov8n-pose.onnx' (onnxruntime, por defecto CPU, nano, imgsz 320).
+# En el portatil con RTX 5060 usamos el modelo PyTorch grande SOBRE GPU: keypoints
+# mas fiables, deteccion de personas mas lejanas y tracker BoT-SORT (re-ID) en
+# follow_controller. POSE_MODEL_NAME y POSE_IMGSZ centralizan el tuneo de banco.
 from ultralytics import YOLO
-pose_model = YOLO('yolov8n-pose.onnx')
-# Warmup: construir la sesion ONNX Runtime y el primer forward AHORA (al abrir la ET),
-# no en la primera deteccion de Follow/Orbit. Mismo imgsz que _detect_persons.
+POSE_MODEL_NAME = 'yolo11m-pose.pt'   # banco: 'yolo11l-pose.pt' si sobra margen GPU
+POSE_IMGSZ      = 640                 # debe coincidir con follow_controller.POSE_IMGSZ
+pose_model = YOLO(POSE_MODEL_NAME)
+if DEVICE == 'cuda':
+    pose_model.to('cuda')
+print(f'[INFO] pose_model ({POSE_MODEL_NAME}) en {DEVICE}')
+# Warmup: construir el grafo y el primer forward AHORA (al abrir la ET), no en la
+# primera deteccion de Follow/Orbit. Mismo imgsz que _detect_persons.
 try:
-    pose_model(np.zeros((480, 640, 3), dtype=np.uint8), imgsz=320, verbose=False)
+    pose_model(np.zeros((POSE_IMGSZ, POSE_IMGSZ, 3), dtype=np.uint8),
+               imgsz=POSE_IMGSZ, verbose=False)
     print('[INFO] pose_model (follow/orbit) warmup OK')
 except Exception as e:
     print(f'[WARN] pose_model warmup fallo: {e}')
@@ -114,6 +130,12 @@ except Exception as e:
 # ============================================================
 
 loop = asyncio.new_event_loop()
+
+# Executor dedicado para producir/procesar los frames de vídeo (captura + YOLO)
+# fuera del event loop, de modo que los envíos de telemetría no queden atascados
+# detrás del cómputo de vídeo. Un solo worker: aiortc espera a recv() antes de
+# volver a llamarlo, así que nunca hay dos frames en vuelo a la vez.
+_video_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='video')
 
 def _start_loop(lp):
     asyncio.set_event_loop(lp)
@@ -130,7 +152,7 @@ threading.Thread(target=_start_loop, args=(loop,), daemon=True).start()
 # `threading.Event().wait()` final.
 # ============================================================
 
-from follow_controller import FollowController, ORBIT_RADIUS_CM
+from follow_controller import FollowController
 
 _follow_ctrl: FollowController = None
 
@@ -170,6 +192,10 @@ def process_tello_telemetry():
         try:
             vx = getattr(tello, 'vx_cm_s', 0) or 0
             vy = getattr(tello, 'vy_cm_s', 0) or 0
+            # Snapshot local: on_message (hilo MQTT) puede poner _follow_ctrl=None
+            # entre la comprobación del `and` y el acceso al atributo → el GIL no
+            # previene este TOCTOU. Capturar la referencia una vez.
+            ctrl = _follow_ctrl
             payload = json.dumps({
                 'lat': 0.0,
                 'lon': 0.0,
@@ -181,10 +207,10 @@ def process_tello_telemetry():
                 'vy': vy / 100.0,
                 'state': tello.state,
                 'flightMode': 'TELLO',
-                'followStatus': _follow_ctrl._follow_status if (_follow_ctrl and _follow_mode) else 'off',
-                'tofDistance': _follow_ctrl._tof_display if (_follow_ctrl and _follow_mode) else -1.0,
-                'orbitStatus': _follow_ctrl._orbit_status if (_follow_ctrl and _follow_ctrl._orbit_mode) else 'off',
-                'orbitTofDistance': _follow_ctrl._orbit_tof_display if (_follow_ctrl and _follow_ctrl._orbit_mode) else -1.0,
+                'followStatus': ctrl._follow_status if (ctrl and _follow_mode) else 'off',
+                'tofDistance': ctrl._tof_display if (ctrl and _follow_mode) else -1.0,
+                'orbitStatus': ctrl._orbit_status if (ctrl and ctrl._orbit_mode) else 'off',
+                'orbitTofDistance': ctrl._orbit_tof_display if (ctrl and ctrl._orbit_mode) else -1.0,
                 'telloWifi': getattr(tello, 'wifi', None),
                 'telloTempC': getattr(tello, 'temp_c', None),
                 'telloFlightTime': getattr(tello, 'flight_time_s', None),
@@ -225,6 +251,19 @@ def monitor_arm_state():
         time.sleep(1)
     _monitoring = False
 
+def _axis_to_rc(v):
+    """Convierte un eje del stick (-1..1) a velocidad RC (-60..60) con zona
+    muerta + curva expo + tope de velocidad, para un control suave."""
+    if abs(v) < MANUAL_DEADZONE:
+        return 0
+    sign = 1 if v >= 0 else -1
+    # expo: suaviza la zona central sin perder el fondo de escala
+    shaped = sign * (abs(v) ** MANUAL_EXPO)
+    rc = int(shaped * 100 * MANUAL_MAX_SPEED_PCT)
+    limit = int(100 * MANUAL_MAX_SPEED_PCT)
+    return max(-limit, min(limit, rc))
+
+
 def handle_joystick(data_str):
     global _orbit_active
     try:
@@ -239,13 +278,13 @@ def handle_joystick(data_str):
             if _follow_mode: return
             if _orbit_active: return
             if tello.state != 'flying': return
-            threshold = 0.1
-            def to_rc(v): return int(v * 100)
+            # Envío directo en cada mensaje: al soltar el stick los ejes quedan
+            # bajo la zona muerta -> _axis_to_rc devuelve 0 -> se manda rc(0,0,0,0).
             tello.rc(
-                to_rc(rx) if abs(rx) >= threshold else 0,
-                to_rc(ry) if abs(ry) >= threshold else 0,
-                to_rc(ly) if abs(ly) >= threshold else 0,
-                to_rc(lx) if abs(lx) >= threshold else 0,
+                _axis_to_rc(rx),   # vx (izq/der)
+                _axis_to_rc(ry),   # vy (adelante/atrás)
+                _axis_to_rc(ly),   # vz (arriba/abajo)
+                _axis_to_rc(lx),   # yaw (rotación)
             )
             return
 
@@ -305,7 +344,7 @@ def on_message(client, userdata, message):
                         print('[TELLO] Error al conectar')
                         client.publish('groundStation/mobileFlutter/disconnected', 'connection_failed')
                         return
-                    tello.startTelemetry(freq_hz=10)
+                    tello.startTelemetry(freq_hz=5)
                     threading.Thread(target=process_tello_telemetry, daemon=True).start()
                 else:
                     print(f'[TELLO] Recuperacion de sesion - estado: "{tello.state}"')
@@ -320,7 +359,7 @@ def on_message(client, userdata, message):
                 asyncio.run_coroutine_threadsafe(webrtc_client(), loop)
                 return
 
-            conn_str = 'com8' if flight_mode == 'ardupilot' else 'tcp:127.0.0.1:5763'
+            conn_str = 'com3' if flight_mode == 'ardupilot' else 'tcp:127.0.0.1:5763'
             baud = 57600 if flight_mode == 'ardupilot' else 115200
             already = dron.state in ('connected', 'armed', 'flying', 'returning')
             if already and hasattr(dron, '_conn_str') and dron._conn_str != conn_str:
@@ -329,7 +368,7 @@ def on_message(client, userdata, message):
                 except Exception: pass
             if not already:
                 try:
-                    dron.connect(conn_str, baud); dron._conn_str = conn_str
+                    dron.connect(conn_str, baud, freq=10); dron._conn_str = conn_str
                     if dron.vehicle is None: raise Exception('Vehicle is None')
                     dron.frequency = 10
                     dron.send_telemetry_info(process_telemetry_info)
@@ -396,12 +435,33 @@ def on_message(client, userdata, message):
         if flight_mode == 'tello':
             if tello is None: return
             if tello.state == 'flying':
+                # Detener Follow Y Orbit antes de aterrizar: si seguimos en
+                # cualquiera de los dos modos, su FSM sigue enviando RC y puede
+                # mantener el dron en el aire. Replica la lógica de orbit 'stop'.
                 if _follow_mode:
                     _follow_mode = False
-                    if _follow_ctrl: _follow_ctrl.stop()
+                if _follow_ctrl is not None:
+                    if getattr(_follow_ctrl, '_orbit_mode', False):
+                        _follow_ctrl.deactivate_orbit()
+                    _follow_ctrl.stop()
+                    _follow_ctrl = None
+                _orbit_active = False
+                if _orbit_thread and _orbit_thread.is_alive():
+                    _orbit_thread.join(timeout=0.3)
                 def aterrizar_tello():
-                    tello.Land(blocking=True)
-                    client.publish('groundStation/mobileFlutter/landed', 'landed')
+                    # Solo confirmamos 'landed' si el descenso se confirma por
+                    # altura. Si no, reafirmamos 'flying' para que la UI mantenga
+                    # isFlying=true y el botón LAND (el dron sigue en el aire).
+                    try:
+                        ok = tello.Land(blocking=True)
+                    except Exception as e:
+                        print(f'[LAND] Excepción al aterrizar Tello: {e}')
+                        ok = False
+                    if ok:
+                        client.publish('groundStation/mobileFlutter/landed', 'landed')
+                    else:
+                        print('[LAND] Aterrizaje NO confirmado; reafirmo flying.')
+                        client.publish('groundStation/mobileFlutter/flying', 'flying')
                 threading.Thread(target=aterrizar_tello, daemon=True).start()
             return
         if dron.state in ('flying', 'returning'):
@@ -458,55 +518,91 @@ def on_message(client, userdata, message):
                 _orbit_active = False
                 if _orbit_thread and _orbit_thread.is_alive():
                     _orbit_thread.join(timeout=0.3)
+                client.publish('groundStation/mobileFlutter/orbitStatus', 'off')
 
             else:
-                try:
-                    parts_o = payload_str.split(':')
-                    radius_cm = float(parts_o[0])
-                    clockwise = len(parts_o) < 2 or parts_o[1].lower() != 'ccw'
-                except (ValueError, IndexError):
-                    radius_cm = ORBIT_RADIUS_CM
-                    clockwise = True
+                # Radio automático: ya NO se usa el valor del slider. El Orbit captura
+                # la distancia actual a la persona como radio (ver activate_orbit). Solo
+                # se parsea la dirección. Compat: tolera tanto 'cw'/'ccw' como el formato
+                # antiguo '<n>:cw' (el número se ignora).
+                clockwise = 'ccw' not in payload_str.lower()
 
                 if _follow_mode:
                     print('[ORBIT] Follow activo — reiniciando como Orbit')
                     _follow_mode = False
+                    client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
 
-                # Siempre construir un FollowController fresco (hilos nuevos) para
-                # evitar hilos zombi de una sesión Follow/Orbit anterior.
-                if _follow_ctrl is not None:
-                    _follow_ctrl.stop()
-                _follow_ctrl = FollowController(tello, pose_model=pose_model)
-                _follow_ctrl.on_stream_dead = _on_follow_stream_dead
+                # Construir un FollowController fresco (hilos nuevos) para evitar
+                # hilos zombi de una sesión Follow/Orbit anterior. Envuelto en
+                # try/except: un fallo al crear/activar no debe matar on_message.
+                try:
+                    if _follow_ctrl is not None:
+                        _follow_ctrl.stop()
+                    _follow_ctrl = FollowController(tello, pose_model=pose_model)
+                    _follow_ctrl.on_stream_dead = _on_follow_stream_dead
 
-                _follow_ctrl.activate_orbit(radius_cm=radius_cm, clockwise=clockwise)
-                _orbit_active = True
-                print(f'[ORBIT] Lanzado — radius={radius_cm}cm, cw={clockwise}')
+                    _follow_ctrl.activate_orbit(clockwise=clockwise)
+                    _orbit_active = True
+                    print(f'[ORBIT] Lanzado — radio=auto (distancia actual), cw={clockwise}')
+                    client.publish('groundStation/mobileFlutter/orbitStatus', 'on')
+                except Exception as e:
+                    print(f'[ORBIT] Error al lanzar: {e}')
+                    _orbit_active = False
+                    if _follow_ctrl is not None:
+                        try: _follow_ctrl.stop()
+                        except Exception: pass
+                        _follow_ctrl = None
+                    client.publish('groundStation/mobileFlutter/orbitStatus', 'off')
+        else:
+            # Precondición no cumplida (no Tello / no volando): rechazar y avisar
+            # para que Flutter no quede con el flag de orbit puesto.
+            print('[ORBIT] Rechazado — Tello no conectado o no volando')
+            client.publish('groundStation/mobileFlutter/orbitStatus', 'off')
 
     if command == 'followMode':
         if flight_mode == 'tello' and tello is not None:
             new_state = message.payload.decode().strip() == 'true'
             if new_state == _follow_mode:
                 return
-            _follow_mode = new_state
-            if _follow_mode:
+            # Activar requiere dron volando (alinea con el handler 'orbit'); si no,
+            # rechazar y avisar para que Flutter no deje el flag follow puesto.
+            if new_state and tello.state != 'flying':
+                print('[TELLO] Follow rechazado — dron no volando')
+                client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
+                return
+            if new_state:
                 if _orbit_active:
                     _orbit_active = False
                     if _orbit_thread and _orbit_thread.is_alive():
                         _orbit_thread.join(timeout=0.5)
-                # Siempre construir un FollowController fresco (hilos nuevos) para
-                # evitar hilos zombi de una sesión anterior que dejarían el modo
-                # atascado en 'waiting'. El deactivate deja _follow_ctrl=None.
-                if _follow_ctrl is not None:
-                    _follow_ctrl.stop()
-                _follow_ctrl = FollowController(tello, pose_model=pose_model)
-                _follow_ctrl.on_stream_dead = _on_follow_stream_dead
-                print('[TELLO] Follow mode ACTIVADO')
+                    client.publish('groundStation/mobileFlutter/orbitStatus', 'off')
+                # Construir un FollowController fresco (hilos nuevos) para evitar
+                # hilos zombi de una sesión anterior que dejarían el modo atascado
+                # en 'waiting'. Envuelto en try/except: un fallo no debe matar
+                # on_message. El deactivate deja _follow_ctrl=None.
+                try:
+                    if _follow_ctrl is not None:
+                        _follow_ctrl.stop()
+                    _follow_ctrl = FollowController(tello, pose_model=pose_model)
+                    _follow_ctrl.on_stream_dead = _on_follow_stream_dead
+                    _follow_mode = True
+                    print('[TELLO] Follow mode ACTIVADO')
+                    client.publish('groundStation/mobileFlutter/followModeStatus', 'on')
+                except Exception as e:
+                    print(f'[TELLO] Error al activar Follow: {e}')
+                    _follow_mode = False
+                    if _follow_ctrl is not None:
+                        try: _follow_ctrl.stop()
+                        except Exception: pass
+                        _follow_ctrl = None
+                    client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
             else:
+                _follow_mode = False
                 if _follow_ctrl:
                     _follow_ctrl.stop()
                     _follow_ctrl = None
                 print('[TELLO] Follow mode DESACTIVADO')
+                client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
 
     if command == 'detectionMode':
         mode = message.payload.decode()
@@ -519,7 +615,15 @@ def on_message(client, userdata, message):
             if tello is None: return
             def desconectar_tello():
                 global _pc, _camera_track, _follow_mode, _follow_ctrl
+                global _orbit_active, _orbit_thread
                 _follow_mode = False
+                # Resetear también orbit: sin esto, _orbit_active queda True y el
+                # guard de handle_joystick bloquea el joystick tras reconectar
+                # aunque no haya órbita real en curso.
+                _orbit_active = False
+                if _orbit_thread and _orbit_thread.is_alive():
+                    _orbit_thread.join(timeout=0.5)
+                _orbit_thread = None
                 if _follow_ctrl: _follow_ctrl.stop(); _follow_ctrl = None
                 try: tello.stream_off()
                 except Exception: pass
@@ -658,9 +762,12 @@ class CameraVideoTrack(VideoStreamTrack):
                         max(0, cx-sx//2):min(fw, cx+sx//2)]
         return cv2.resize(cropped, (fw, fh), interpolation=cv2.INTER_LINEAR)
 
-    async def recv(self):
-        self.frame_count += 1
-
+    # Producción + procesado síncrono de un frame (captura, undistort, zoom,
+    # detección YOLO y dibujado). Se ejecuta en un hilo worker (run_in_executor)
+    # para NO bloquear el event loop de asyncio, que es por donde también se
+    # envía la telemetría. cv2 y torch liberan el GIL en sus llamadas nativas,
+    # así que el worker corre realmente en paralelo y el loop queda libre.
+    def _build_frame(self):
         if flight_mode == 'tello':
             frame = tello.get_frame()
             if frame is None:
@@ -678,18 +785,19 @@ class CameraVideoTrack(VideoStreamTrack):
         frame = cv2.resize(frame, (640, 480), interpolation=cv2.INTER_LINEAR)
 
         if flight_mode == 'tello':
+            # Snapshot local: evita TOCTOU si on_message pone _follow_ctrl=None
+            # entre la comprobación y get_debug_frame().
+            ctrl = _follow_ctrl
             ctrl_active = ((_follow_mode or _orbit_active) and
-                           _follow_ctrl is not None and
+                           ctrl is not None and
                            tello.state == 'flying')
             if ctrl_active:
                 # Solo usar el debug frame si es reciente; si el follow loop se
                 # retrasa/atasca, mostramos el frame en vivo (no se congela el stream).
-                debug = _follow_ctrl.get_debug_frame(max_age_s=0.5)
+                debug = ctrl.get_debug_frame(max_age_s=0.2)
                 if debug is not None:
                     frame = debug
-            vf = VideoFrame.from_ndarray(frame, format='rgb24')
-            vf.pts, vf.time_base = self.frame_count, fractions.Fraction(1, 30)
-            return vf
+            return frame
 
         if self.frame_count % 25 == 0 and self.detection_mode != 'none':
             results = model(frame)
@@ -714,8 +822,19 @@ class CameraVideoTrack(VideoStreamTrack):
         ts = datetime.now().strftime('%H:%M:%S.%f')[:-3]
         cv2.putText(frame_bgr, ts, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+        return frame
+
+    async def recv(self):
+        self.frame_count += 1
+        # El cómputo pesado (captura + YOLO) va a un hilo para liberar el event
+        # loop; así los envíos de telemetría dejan de salir a ráfagas (~2.3 s) y
+        # vuelven a su cadencia (~5 Hz).
+        running_loop = asyncio.get_running_loop()
+        frame = await running_loop.run_in_executor(_video_executor, self._build_frame)
         vf = VideoFrame.from_ndarray(frame, format='rgb24')
         vf.pts, vf.time_base = self.frame_count, fractions.Fraction(1, 30)
+        # Pacing: cede el loop y acota a ~30 fps aunque _build_frame sea rápido.
+        await asyncio.sleep(1 / 30)
         return vf
 
 # ============================================================

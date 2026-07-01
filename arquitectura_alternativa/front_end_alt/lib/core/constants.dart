@@ -44,4 +44,9 @@ class Constants {
   static const String topicMissionUploaded = 'groundStation/mobileFlutter/missionUploaded';
   static const String topicMissionStarted = 'groundStation/mobileFlutter/missionStarted';
   static const String topicMissionWaypoint = 'groundStation/mobileFlutter/missionWaypoint';
+  // Acción de cámara solicitada por la ET durante una misión: 'photo' | 'record:N'
+  static const String topicCameraAction = 'groundStation/mobileFlutter/cameraAction';
+  // Confirmaciones de modos Tello (autoritativas: 'on' | 'off')
+  static const String topicFollowModeStatus = 'groundStation/mobileFlutter/followModeStatus';
+  static const String topicOrbitStatus = 'groundStation/mobileFlutter/orbitStatus';
 }

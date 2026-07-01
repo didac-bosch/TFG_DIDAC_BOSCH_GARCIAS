@@ -1,0 +1,520 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%                                                                  %%%%% 
+%%%%%%          Maqueta de memòria TFC/PFC de l'EETAC                   %%%%% 
+%%%%%%                                                                  %%%%% 
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%                                                                         %%
+%%          Autor: Xavier Prats i Menéndez (xavier.prats@upc.edu)          %% 
+%%                  Technical University of Catalonia (UPC)                %%
+%%                                                                         %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%      This work is licensed under the Creative Commons  Attribution-     %%
+%%   -Noncommercial-Share Alike 3.0 Spain License. To view a copy of this  %% 
+%%    license, visit http://creativecommons.org/licenses/by-nc-sa/3.0/es/  %%
+%%    or send a letter to Creative Commons, 171 Second Street, Suite 300,  %%
+%%                  San Francisco,California, 94105, USA.                  %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%% Versió 2.1 - Juliol 2012                                                %%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% NOTA: els seguents packages son necessaris per utilitzar la
+%%%       plantilla seguent:
+%%%       ifthen,calc,helvet,pslatex,fancyhdr,nextpage,subfigure,tocloft,graphicx,url
+
+%%% NOTA: Es possible que algunes distribuicions Linux o Windows.
+%%%       no portin aquests paquets instal·lats per defecte.
+%%%       En aquest cas els haureu d'instal·lar manualment.
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% 1- INICIALITZACIÓ
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[spanish,final]{setup/eetac_tfc_pfc}
+%% * OPCIONS A CONFIGURAR al \documentclass
+%%    - Estat del document: final o draft
+%%      NOTA: Draft no inserta les figures i marca només l'espai que
+%%      ocupen. També s'indica quan el text sobrepassa els marges.
+%%      Draft és molt útil per compilar ràpid el document si no és important
+%%      en aquell moment visualitzar les figures.
+%%    - Idioma PRINCIPAL del document: catalan, spanish, english, french...
+
+\usepackage[spanish]{babel}
+%%  * INCLOURE TOTS ELS IDIOMES QUE S'USARAN EN EL DOCUMENT
+%%    NOTA: per canviar d'idioma al mig del document usar:
+%%          \selectlanguage{nom_idioma}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% 2- CÀRREGA DE PAQUETS ADICIONALS (OPCIONALS)
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% NOTA: Es possible que algunes distribuicions Linux o Windows.
+%%%       no portin aquests paquets instal·lats per defecte.
+%%%       En aquest cas els haureu d'instal·lar manualment.
+
+%% El paquet inputenc és extramadament útil. 
+%% Permet escriure els accents directament amb l'editor de texte
+%% sense haver de fer coses com per exemple: introducci\'o
+%% Heu d'especificar la codificació de caracters que utilitzeu pel
+%% vostre fitxer (en aquest exemple utf8)
+\usepackage[normalem]{ulem}
+\usepackage{xcolor}
+\usepackage{matlab-prettifier}
+\usepackage{cancel}
+\definecolor{grey}{rgb}{0.5, 0.5, 0.52} 
+\definecolor{navy}{rgb}{0.1, 0.05, 0.72} 
+\newcommand{\PGPremove}[2]{\textcolor{red}{\sout{#1}}{ \textcolor{red}{#2}}}
+\newcommand{\PGP}[1]{\textcolor{blue}{#1}}
+\newcommand{\jordi}[1]{\textcolor{magenta}{#1}}
+\newcommand{\sara}[1]{\textcolor{grey}{#1}}
+\newcommand{\PGPcomment}[1]{\textcolor{navy}{#1}}
+\usepackage[utf8]{inputenc}
+\usepackage{float}
+
+%% Símbols matemàtics de la American Mathematical Society
+\usepackage{amssymb,amsmath,amsfonts,mathtools}  
+
+%% El paquet array proporciona eines molt útils a l'hora de fer 
+%% equacions amb matrius
+\usepackage{array}             
+
+%% Paquet que permet fer taules fusionant cel·les de files consecutives
+\usepackage{multirow}  
+
+%% Paquet molt útil en cas de tenir taules molt llargues que 
+%   ocupin vàries pàgines
+\usepackage{longtable}          
+
+%% Permet canviar els colors del document
+%\usepackage{color,colortbl}
+
+%% Paquet molt útil que permet activar links en el PDF final.
+%% * NO OBLIDAR DE CONFIGURAR els quatre primer camps!
+\usepackage[
+  pdfauthor={Dídac Bosch Garcias},            % Configurar adientment
+  pdftitle={Trabajo fin de Grado - Dídac Bosch Garcias}, % Configurar adientment
+  pdfsubject={Sistema de control de drones vía Flutter web},          % Configurar adientment  
+  pdfkeywords={dron, Flutter, Ardupilot ...},    % Configurar adientment
+  pdfcreator={EETAC-UPC}, 
+  pdfproducer={LaTeX, dvipdf},
+  pdfdisplaydoctitle=true, plainpages=false, linktocpage=true,         
+  colorlinks=true, linkcolor=blue,citecolor=blue,urlcolor=blue,
+  hyperfootnotes=false, pagebackref=true, pdfpagelabels=true,
+  pdfpagemode=UseOutlines,
+]{hyperref} 
+
+%% NOTA IMPORTANT!:
+%% Per tal que hyperef funcioni correctament amb els capitols o seccions no
+%% numerats (\chapter*{}), com per exemple introducció, conclusions i bibliografia
+%% cal posar les dues comandes seguents ABANS del \chapter*{} en questió
+%\cleardoublepage
+%\phantomsection
+
+%% Permet trencar links URL. 
+%% Atenció! afegir aquest paquet DESPRES del hyperref!!
+\usepackage{breakurl} 
+
+%% Permet arranjar matricialment multiples figures
+%% NOTA: afegir aquest paquet DESPRES del hyperref!!
+%%       Si no es desitja utilitzar aquest paquet, comentar la linia seguent
+%%       i anar TAMBE al fitxer de classe (eetac_tfc_pfc.cls) per substituir: 
+%%       \RequirePackage[subfigure]{tocloft}  per  \RequirePackage{tocloft}
+\usepackage{subfigmat}       
+\usepackage{acronym}
+
+% ── Corrección de sangrías del ÍNDICE GENERAL ──────────────────
+% Estilo limpio: número sin "CAPÍTULO", igual que la maqueta EETAC
+\renewcommand{\cftchappresnum}{}          % quita "CAPÍTULO" del TOC
+\renewcommand{\cftchapaftersnum}{.~~}     % añade punto y espacio
+\setlength{\cftchapnumwidth}{2em}         % "1. " cabe en 2em
+
+% Secciones (1.1, 1.2...) — sangría bajo el número de capítulo
+\setlength{\cftsecindent}{2em}
+\setlength{\cftsecnumwidth}{2.5em}
+
+% Subsecciones (1.1.1, 1.2.3...) — sangría acumulada
+\setlength{\cftsubsecindent}{4.5em}
+\setlength{\cftsubsecnumwidth}{3.5em}
+
+% Mostrar también subsubsecciones si las tienes
+\setcounter{tocdepth}{3}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% 3- DOCUMENT
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+%%% Configuració de les dades i variables boleanes rellevants del document:
+\input{setup/dades.tex}  
+
+%%% Configuració de MACROS o ENTORNS (opcionals) definides per l'usuari:
+\input{setup/user-macros.tex}  
+
+%%% Configuració manual de les regles d'hyphenation:
+\input{setup/hyphenation.tex}  
+
+\begin{document}
+
+%% Seleccionar l'idioma principal del document:
+\selectlanguage{spanish}
+
+\beforepreface  
+
+%% RESUM i OVERVIEW
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% NOTA: les longituds passades com a parametres d'entrada  s'han
+%        d'ajustar manualment fins que el requadre del resum/overview
+%        ocupi tota la pàgina. 
+
+%%% Resum en català (o castellà)
+\selectlanguage{spanish}   
+\begin{resum}{1cm}
+Abstract en català.
+
+\end{resum}
+
+%%% Resum en anglès
+\selectlanguage{english}   
+\begin{overview}{1cm}
+Abstract in English
+
+\end{overview}
+
+% Tornar a l'idioma principal del document
+\selectlanguage{spanish}  
+
+%NOTA: En cas d'utilitzar l'espanyol com a idioma principal del document, el
+%      latex anomena les taules com a 'Cuadros'. Si es desitja canviar aquesta
+%      nomenclatura i utilitzar la paraula 'Tabla' descomentar les línies següents:
+\def\listtablename{Índice de tablas}
+\def\tablename{Tabla}%
+
+
+
+% Amb aqueta comanda indiquem que ja s'han inclòs tots els apartats del prefaci del 
+% projecte o podem començar a incloure els capitols de la memòria
+\afterpreface
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% INCLOURE A PARTIR D'AQUÍ TOTS ELS CAPÍTOLS DE LA MEMORIA   %%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+% NOTA: recordar que la introducció i les conclusions són capítols NO
+%       enumerats, per tant s'ha d'usar \chapter*
+
+% NOTA: és aconsellable incloure els capítols de la memòria en fitxers 
+%       separats utlitzant la comanda \input  Per exemple:
+%       \input{capitol1}  
+%       que farà que s'inclogui el fitxer capitol1.tex
+
+% NOTA: Si es vol incloure agraïments i/o glosari, fer-ho utilitzant 
+% \chapter*{} i incloure'ls abans la introducció
+
+\input{memoria/chapters/acronyms}
+\input{memoria/chapters/chap1_introduccion}
+\input{memoria/chapters/chap2_dee}
+\input{memoria/chapters/chap3_flutter_y_fundamentos}
+\input{memoria/chapters/chap4_objetivos_tareas_y_plan_de_trabajo}
+\input{memoria/chapters/chap5_control_basico}
+\input{memoria/chapters/chap6_demostraciones}
+\input{memoria/chapters/chap7_evolucion}
+\input{memoria/chapters/chap8_ezdrone}
+\input{memoria/chapters/chap9_sostenibilidad}
+\input{memoria/chapters/chap10_conclusiones_y_futuro}
+
+
+%%%  BIBLIOGRAFIA
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\begin{thebibliography}{99}
+
+\bibitem{UAV applications}
+G.N. Muchiri and S. Kimathi,
+\textit{A Review of Applications and Potential Applications of UAV},
+en \textit{Proceedings of the Sustainable Research \& Innovation (SRI) Conference},
+Jomo Kenyatta University of Agriculture and Technology,
+publicado el 04 abr. 2022.
+Disponible en: \url{https://sri.jkuat.ac.ke/jkuatsri/index.php/sri/article/view/325}.
+
+\bibitem{missionplanner}
+M. Oborne,
+\textit{Mission Planner Ground Control Station},
+ArduPilot, open-source software, 2013.
+Disponible en: \url{https://ardupilot.org/planner/}.
+[Consultat: 04 juny 2026].
+
+\bibitem{qgroundcontrol}
+MAVLink / QGroundControl Dev Team,
+\textit{QGroundControl: Cross-platform Ground Control Station for Drones},
+open-source software.
+Disponible en: \url{http://qgroundcontrol.com}.
+[Consultat: 04 juny 2026].
+
+\bibitem{flutter}
+Google LLC,
+\textit{Flutter -- Build apps for any screen},
+2024.
+Disponible en: \url{https://flutter.dev}
+
+\bibitem{dronsEETAC}
+dronsEETAC,
+\textit{Drone Engineering Ecosystem (DEE)},
+repositori GitHub, Universitat Politècnica de Catalunya -- EETAC, 2022.
+Disponible en: \url{https://github.com/dronsEETAC/DroneEngineeringEcosystemDEE}.
+[Consultat: 04 juny 2026].
+
+\bibitem{pixhawk}
+3DR / ArduPilot,
+\textit{Pixhawk Autopilot Overview},
+documentació tècnica, ArduPilot.
+Disponible en: \url{https://ardupilot.org/copter/docs/common-pixhawk-overview.html}.
+[Consultat: 04 juny 2026].
+
+\bibitem{ardupilot}
+ArduPilot Dev Team,
+\textit{ArduPilot Open Source Autopilot},
+open-source firmware.
+Disponible en: \url{https://ardupilot.org}.
+[Consultat: 04 juny 2026].
+
+
+\bibitem{tello}
+Ryze Technology,
+\textit{Tello Drone -- Specifications},
+Shenzhen Ryze Technology Co., 2018.
+Disponible en: \url{https://www.ryzerobotics.com/es/tello}.
+[Consultat: 04 juny 2026].
+
+\bibitem{px4}
+PX4 Dev Team,
+\textit{PX4 Open Source Autopilot},
+open-source firmware.
+Disponible en: \url{https://px4.io}.
+[Consultat: 04 juny 2026].
+
+\bibitem{mavlink}
+MAVLink Dev Team,
+\textit{MAVLink Micro Air Vehicle Communication Protocol},
+open-source protocol.
+Disponible en: \url{https://mavlink.io}.
+[Consultat: 04 juny 2026].
+
+\bibitem{ardupilot_gcs}
+ArduPilot Dev Team,
+\textit{Choosing a Ground Station},
+documentació oficial ArduPilot.
+Disponible en: \url{https://ardupilot.org/copter/docs/common-choosing-a-ground-station.html}.
+[Consultat: 04 juny 2026].
+
+
+\bibitem{skydio}
+Skydio,
+\textit{Skydio Autonomy -- Autonomous Drone Technology},
+Skydio, Inc.
+Disponible en: \url{https://www.skydio.com/software}.
+[Consultat: 04 juny 2026].
+
+
+\bibitem{djifly}
+DJI,
+\textit{DJI Fly -- App},
+DJI Technology Co., Ltd.
+Disponible en: \url{https://www.dji.com/es/dji-fly}.
+[Consultat: 04 juny 2026].
+
+
+\bibitem{mqtt_dart}
+Tim Carey-Smith et al.,
+\textit{mqtt\_client -- A server and browser based MQTT client for Dart},
+pub.dev, Dart package.
+Disponible en: \url{https://pub.dev/packages/mqtt_client}.
+[Consultat: 04 juny 2026].
+
+
+\bibitem{sun2025}
+S.-C. Sun and Y.-C. Tsai,
+\textit{A Modular AIoT Framework for Low-Latency Real-Time Robotic
+Teleoperation in Smart Cities},
+arXiv preprint arXiv:2510.11421, oct. 2025.
+DOI: \url{https://doi.org/10.48550/arXiv.2510.11421}.
+
+\bibitem{hexsoon}
+dronsEETAC,
+\textit{Guia Hexsoon EDU-450: Muntatge, configuració i proves de vol},
+repositori GitHub, Universitat Politècnica de Catalunya -- EETAC.
+Disponible en: \url{https://github.com/dronsEETAC/GuiaHexsoonEDU450}.
+[Consultat: 04 juny 2026].
+
+\bibitem{telloEETAC}
+dronsEETAC,
+\textit{Tello Engineering Ecosystem: A software tool for controlling
+a Tello drone using different devices and applications},
+repositori GitHub, Universitat Politècnica de Catalunya -- EETAC, 2023.
+Disponible en: \url{https://github.com/dronsEETAC/TelloEngineeringEcosystem}.
+[Consultat: 04 juny 2026].
+
+\bibitem{dart}
+Google,
+\textit{Dart Programming Language},
+open-source, Google LLC, 2011.
+Disponible en: \url{https://dart.dev}.
+[Consultat: 04 juny 2026].
+
+
+\bibitem{dart2js}
+Google,
+\textit{dart2js: Dart-to-JavaScript compiler},
+documentació oficial Dart.
+Disponible en: \url{https://dart.dev/tools/dart2js}.
+[Consultat: 04 juny 2026].
+
+\bibitem{flutter_arch}
+Google,
+\textit{Flutter Architectural Overview},
+documentació oficial Flutter.
+Disponible en: \url{https://docs.flutter.dev/resources/architectural-overview}.
+[Consultat: 04 juny 2026].
+
+\bibitem{provider}
+R. Rousselet,
+\textit{provider: A wrapper around InheritedWidget to make them
+easier to use and more reusable},
+pub.dev, versió 6.1.5+1, Dart package, 2024.
+Disponible en: \url{https://pub.dev/packages/provider}.
+[Consultat: 04 juny 2026].
+
+\bibitem{hivemq}
+HiveMQ GmbH, ``HiveMQ: The Real-Time Industrial Data Platform,''
+[Online]. Available: \url{https://www.hivemq.com}.
+[Accessed: Jun. 5, 2026].
+
+\bibitem{mosquitto}
+Eclipse Foundation, ``Eclipse Mosquitto: An Open Source MQTT Broker,''
+[Online]. Available: \url{https://mosquitto.org}.
+[Accessed: Jun. 5, 2026].
+
+\bibitem{ardupilot_sitl}
+ArduPilot Dev Team, ``Mission Planner Simulation (SITL),''
+[Online]. Available: \url{https://ardupilot.org/planner/docs/mission-planner-simulation.html}.
+[Accessed: Jun. 4, 2026].
+
+\bibitem{api}
+IBM, ``What is an API (Application Programming Interface)?''
+IBM Think, Apr. 2024. [Online].
+Available: \url{https://www.ibm.com/es-es/think/topics/api}.
+[Accessed: Jun. 5, 2026].
+
+\bibitem{apirest}
+R. T. Fielding, ``Architectural Styles and the Design of Network-based
+Software Architectures,'' Ph.D. dissertation, Univ. of California,
+Irvine, CA, USA, 2000. [Online].
+Available: \url{https://ics.uci.edu/~fielding/pubs/dissertation/rest_arch_style.htm}.
+
+\bibitem{websocket}
+I. Fette and A. Melnikov, ``The WebSocket Protocol,''
+RFC 6455, Internet Engineering Task Force (IETF), Dec. 2011.
+[Online]. Available: \url{https://www.rfc-editor.org/rfc/rfc6455}.
+
+\bibitem{tcp}
+J. Postel, ``Transmission Control Protocol,''
+RFC 793, Internet Engineering Task Force (IETF), Sep. 1981. [Online].
+Available: \url{https://www.rfc-editor.org/rfc/rfc793}.
+
+\bibitem{udp}
+J. Postel, ``User Datagram Protocol,''
+RFC 768, Internet Engineering Task Force (IETF), Aug. 1980. [Online].
+Available: \url{https://www.rfc-editor.org/rfc/rfc768}.
+
+\bibitem{http}
+R. Fielding et al., ``HTTP Semantics,''
+RFC 9110, Internet Engineering Task Force (IETF), Jun. 2022. [Online].
+Available: \url{https://www.rfc-editor.org/rfc/rfc9110}.
+
+\bibitem{tls}
+E. Rescorla, ``The Transport Layer Security (TLS) Protocol Version 1.3,''
+RFC 8446, Internet Engineering Task Force (IETF), Aug. 2018. [Online].
+Available: \url{https://www.rfc-editor.org/rfc/rfc8446}.
+
+\bibitem{bloqueo_http}
+M. West, ``Mixed Content,''
+W3C Candidate Recommendation, Aug. 2016. [Online].
+Available: \url{https://www.w3.org/TR/mixed-content/}.
+
+\bibitem{mqtt}
+OASIS Standard, ``MQTT Version 5.0,''
+OASIS, Mar. 7, 2019. [Online].
+Available: \url{https://docs.oasis-open.org/mqtt/mqtt/v5.0/mqtt-v5.0.html}.
+
+\bibitem{webrtc}
+C. Jennings, H. Boström, and J.-M. Bruaroey, ``WebRTC 1.0:
+Real-Time Communication Between Browsers,''
+W3C Recommendation, Jan. 26, 2021. [Online].
+Available: \url{https://www.w3.org/TR/webrtc/}.
+
+\bibitem{signalling}
+WebRTC.org, ``Peer Connections,''
+Google. [Online].
+Available: \url{https://webrtc.org/getting-started/peer-connections}.
+[Accessed: Jun. 5, 2026].
+
+\bibitem{json}
+Ecma International, ``The JSON Data Interchange Format,''
+ECMA-404, 2nd ed., Dec. 2017. [Online].
+Available: \url{https://www.json.org/json-es.html}.
+
+
+
+
+
+
+
+%% TFGs previos
+
+\bibitem{pinon2024}
+Piñón Mediero, Jorge,
+\textit{Development of an attitude determination and control simulator for small satellites},
+2024.
+Treball de final de màster, Universitat Politècnica de Catalunya,
+PRISMA-185586. URI: \url{http://hdl.handle.net/2117/410638}
+
+\end{thebibliography}
+
+\input{}
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%                           APENDIXS                         %%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\pagestyle{empty}  % no tocar
+
+%% Descomentar una de les dues línies següents, en funció de:
+%%  a) els apendixs s'encuadernaran apart (amb portada) 
+%%  b) els apendixs s'enquadernen amb el mateix projecte (sense portada). 
+%% Recordeu que si tot el document (amb apèndixs) excedeix les 100 pagines 
+%% s'ha d'enquadernar a part
+%\appendix\ambportada
+\appendix\senseportada
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%% INCLOURE A PARTIR D'AQUI TOTS ELS CAPÍTOLS DELS APENDIXS   %%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\input{appendix/AppendixA}
+%\input{appendix/AppendixB}
+
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% i  aixo es tot! ;)
+\end{document}
+
+
+
+
+
+

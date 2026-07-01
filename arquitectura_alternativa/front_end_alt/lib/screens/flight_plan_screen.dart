@@ -5,6 +5,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:provider/provider.dart';
 import '../provider.dart';
 import '../core/styles.dart';
+import '../core/drone_video_view.dart';
 
 // ─── PANTALLA PRINCIPAL ───────────────────────────────────────────────────────
 // Abre un mapa satélite interactivo para colocar waypoints y asignarles
@@ -132,6 +133,23 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
         return 'RTL';
       case WaypointActionType.land:
         return 'Land';
+    }
+  }
+
+  IconData _actionIcon(WaypointActionType t) {
+    switch (t) {
+      case WaypointActionType.none:
+        return Icons.circle;
+      case WaypointActionType.hover:
+        return Icons.pause;
+      case WaypointActionType.takePhoto:
+        return Icons.photo_camera;
+      case WaypointActionType.recordVideo:
+        return Icons.videocam;
+      case WaypointActionType.rtl:
+        return Icons.home;
+      case WaypointActionType.land:
+        return Icons.flight_land;
     }
   }
 
@@ -814,8 +832,25 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
 
     return Stack(
       children: [
+        // ── Vídeo oculto ─────────────────────────────────────────
+        // Monta el stream del dron fuera de pantalla (1×1) para que exista un
+        // elemento <video> en el DOM: lo necesitan capturePhoto/startRecording
+        // cuando un waypoint tiene acción de foto/vídeo (aquí la pantalla es mapa).
+        if (provider.remoteStream != null)
+          Offstage(
+            offstage: true,
+            child: SizedBox(
+              width: 1,
+              height: 1,
+              child: DroneVideoView(stream: provider.remoteStream!),
+            ),
+          ),
         // ── Mapa fullscreen ──────────────────────────────────────
-        FlutterMap(
+        // RepaintBoundary: aísla el repintado del mapa del resto del árbol para que
+        // el rebuild de telemetría (10Hz) no fuerce repintar overlays y el timer de
+        // interpolación del icono (16ms) corra fluido.
+        RepaintBoundary(
+          child: FlutterMap(
           mapController: _mapController,
           options: MapOptions(
             initialCenter: dronePos ?? _mapCenter,
@@ -867,67 +902,112 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
                     point: LatLng(_waypoints[i].lat, _waypoints[i].lon),
                     width: i == activeIdx ? 38 : 28,
                     height: i == activeIdx ? 38 : 28,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: i < activeIdx
-                            ? AppColors.disabled
-                            : i == activeIdx
-                            ? Colors.teal
-                            : AppColors.surface,
-                        border: Border.all(
-                          color: i == activeIdx
-                              ? Colors.teal
-                              : AppColors.primary,
-                          width: i == activeIdx ? 3 : 2,
-                        ),
-                      ),
-                      child: Center(
-                        child: Text(
-                          '${i + 1}',
-                          style: TextStyle(
-                            color: i <= activeIdx
-                                ? Colors.white
-                                : AppColors.primary,
-                            fontSize: i == activeIdx ? 13 : 10,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                // Icono dron en tiempo real
-                if (dronePos != null)
-                  Marker(
-                    point: dronePos,
-                    width: 36,
-                    height: 36,
-                    child: Transform.rotate(
-                      angle: provider.currentHeading * pi / 180,
-                      child: Stack(
-                        clipBehavior: Clip.none,
-                        alignment: Alignment.center,
-                        children: [
-                          Image.asset(
-                            'assets/images/drone_icon.png',
-                            width: 32,
-                            height: 32,
-                          ),
-                          const Positioned(
-                            top: -14,
-                            child: Icon(
-                              Icons.arrow_upward,
-                              color: Colors.greenAccent,
-                              size: 14,
+                    child: Stack(
+                      clipBehavior: Clip.none,
+                      fit: StackFit.expand,
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: i < activeIdx
+                                ? AppColors.disabled
+                                : i == activeIdx
+                                ? Colors.teal
+                                : AppColors.surface,
+                            border: Border.all(
+                              color: i == activeIdx
+                                  ? Colors.teal
+                                  : AppColors.primary,
+                              width: i == activeIdx ? 3 : 2,
                             ),
                           ),
-                        ],
-                      ),
+                          child: Center(
+                            child: Text(
+                              '${i + 1}',
+                              style: TextStyle(
+                                color: i <= activeIdx
+                                    ? Colors.white
+                                    : AppColors.primary,
+                                fontSize: i == activeIdx ? 13 : 10,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        // Badge de acción del waypoint (oculto si es 'none')
+                        if (_waypoints[i].action.type !=
+                            WaypointActionType.none)
+                          Positioned(
+                            right: -4,
+                            top: -4,
+                            child: Container(
+                              width: 16,
+                              height: 16,
+                              alignment: Alignment.center,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: _actionColor(_waypoints[i].action.type),
+                                border: Border.all(
+                                  color: Colors.white,
+                                  width: 1,
+                                ),
+                              ),
+                              child: Icon(
+                                _actionIcon(_waypoints[i].action.type),
+                                size: 10,
+                                color: Colors.white,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
               ],
             ),
+            // Icono dron en tiempo real — posición/orientación interpoladas para
+            // un movimiento fluido independiente de la tasa de telemetría.
+            if (dronePos != null)
+              ValueListenableBuilder<LatLng>(
+                valueListenable: provider.droneRenderPos,
+                builder: (_, renderPos, _) => ValueListenableBuilder<double>(
+                  valueListenable: provider.droneRenderHeading,
+                  builder: (_, renderHeading, _) => MarkerLayer(
+                    markers: [
+                      Marker(
+                        point: renderPos,
+                        width: 36,
+                        height: 36,
+                        child: Transform.rotate(
+                          angle: renderHeading * pi / 180,
+                          child: Stack(
+                            clipBehavior: Clip.none,
+                            alignment: Alignment.center,
+                            children: [
+                              RepaintBoundary(
+                                child: Image.asset(
+                                  'assets/images/drone_icon.png',
+                                  width: 32,
+                                  height: 32,
+                                ),
+                              ),
+                              const Positioned(
+                                top: -14,
+                                child: Icon(
+                                  Icons.arrow_upward,
+                                  color: Colors.greenAccent,
+                                  size: 14,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
           ],
+          ),
         ),
 
         // ── Overlay progreso WP (top-left) ───────────────────────
@@ -941,19 +1021,54 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
               borderRadius: BorderRadius.circular(10),
               border: Border.all(color: Colors.teal),
             ),
-            child: Row(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(Icons.route, color: Colors.teal, size: 14),
-                const SizedBox(width: 6),
-                Text(
-                  'WP ${activeIdx + 1} / ${_waypoints.length}',
-                  style: const TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 13,
-                    fontWeight: FontWeight.bold,
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.route, color: Colors.teal, size: 14),
+                    const SizedBox(width: 6),
+                    Text(
+                      'WP ${activeIdx + 1} / ${_waypoints.length}',
+                      style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 13,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
                 ),
+                // Acción del waypoint activo (oculta si es 'none')
+                if (activeIdx >= 0 &&
+                    activeIdx < _waypoints.length &&
+                    _waypoints[activeIdx].action.type !=
+                        WaypointActionType.none) ...[
+                  const SizedBox(height: 6),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
+                      color: _actionColor(_waypoints[activeIdx].action.type)
+                          .withValues(alpha: 0.18),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(
+                        color: _actionColor(_waypoints[activeIdx].action.type),
+                      ),
+                    ),
+                    child: Text(
+                      _waypoints[activeIdx].action.label,
+                      style: TextStyle(
+                        color: _actionColor(_waypoints[activeIdx].action.type),
+                        fontSize: 11,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

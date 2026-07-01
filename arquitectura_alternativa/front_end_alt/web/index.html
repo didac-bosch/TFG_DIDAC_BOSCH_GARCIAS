@@ -42,21 +42,87 @@
     }
 
 
+    // ------------ Galería — almacenamiento en IndexedDB ---------------
+    // Cada registro: {id, type:'photo'|'video', mime, filename, timestamp, blob}
+    // Los object URLs se cachean en window._ezMediaUrls para acceso síncrono.
+    window._ezMediaUrls = {};
+    const _EZ_DB = 'ezdrone_media', _EZ_STORE = 'media';
+
+    function _ezOpenDb() {
+      return new Promise((resolve, reject) => {
+        const req = indexedDB.open(_EZ_DB, 1);
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(_EZ_STORE)) {
+            db.createObjectStore(_EZ_STORE, { keyPath: 'id' });
+          }
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+    }
+
+    function _ezPutMedia(record) {
+      _ezOpenDb().then(db => {
+        const tx = db.transaction(_EZ_STORE, 'readwrite');
+        tx.objectStore(_EZ_STORE).put(record);
+        if (record.blob) {
+          window._ezMediaUrls[record.id] = URL.createObjectURL(record.blob);
+        }
+      }).catch(e => console.error('IndexedDB put:', e));
+    }
+
+    // Recorre todos los registros, recrea los object URLs y devuelve la
+    // metadata (sin blobs) como JSON string.
+    window.ezInitMediaStore = function () {
+      return _ezOpenDb().then(db => new Promise((resolve) => {
+        const tx = db.transaction(_EZ_STORE, 'readonly');
+        const req = tx.objectStore(_EZ_STORE).getAll();
+        req.onsuccess = () => {
+          const meta = (req.result || []).map(r => {
+            if (r.blob && !window._ezMediaUrls[r.id]) {
+              window._ezMediaUrls[r.id] = URL.createObjectURL(r.blob);
+            }
+            return { id: r.id, type: r.type, mime: r.mime, filename: r.filename, timestamp: r.timestamp };
+          });
+          resolve(JSON.stringify(meta));
+        };
+        req.onerror = () => resolve('[]');
+      })).catch(() => '[]');
+    };
+
+    window.ezGetMediaUrl = function (id) {
+      return window._ezMediaUrls[id] || '';
+    };
+
+    window.ezDeleteMedia = function (id) {
+      const url = window._ezMediaUrls[id];
+      if (url) { URL.revokeObjectURL(url); delete window._ezMediaUrls[id]; }
+      _ezOpenDb().then(db => {
+        db.transaction(_EZ_STORE, 'readwrite').objectStore(_EZ_STORE).delete(id);
+      }).catch(e => console.error('IndexedDB delete:', e));
+    };
+
     // ------------ Captura y grabación del stream WebRTC ---------------
     let _droneRecorder = null;
     let _droneChunks = [];
 
-    window.captureDroneFrame = function (filename) {
+    window.captureDroneFrame = function (id, filename) {
       const video = document.querySelector('video');
       if (!video) { console.warn('captureDroneFrame: no hay elemento video'); return; }
       const canvas = document.createElement('canvas');
       canvas.width = video.videoWidth || 640;
       canvas.height = video.videoHeight || 480;
       canvas.getContext('2d').drawImage(video, 0, 0);
+      // Descarga al navegador (comportamiento original)
       const a = document.createElement('a');
       a.href = canvas.toDataURL('image/png');
       a.download = filename;
       a.click();
+      // Persiste en IndexedDB para la galería
+      canvas.toBlob(blob => {
+        if (blob) _ezPutMedia({ id, type: 'photo', mime: 'image/png', filename, timestamp: Date.now(), blob });
+      }, 'image/png');
     };
 
     window._droneStream = null;
@@ -101,19 +167,22 @@
       }
     };
 
-    window.stopDroneRecording = function (filename) {
+    window.stopDroneRecording = function (id, filename) {
       if (!_droneRecorder) { console.warn('stopDroneRecording: no hay grabación activa'); return; }
       _droneRecorder.onstop = () => {
         const mime = window._droneRecordingMimeType || 'video/webm';
         const isNativeMp4 = mime.includes('mp4');
         const blob = new Blob(_droneChunks, { type: mime });
+        const dlName = isNativeMp4 ? filename : filename.replace('.mp4', '.webm');
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
         // iOS: descarga como .mp4 real — Chrome: descarga como .webm
-        a.download = isNativeMp4 ? filename : filename.replace('.mp4', '.webm');
+        a.download = dlName;
         a.click();
         setTimeout(() => URL.revokeObjectURL(url), 5000);
+        // Persiste en IndexedDB para la galería (object URL propio, no se revoca)
+        _ezPutMedia({ id, type: 'video', mime, filename: dlName, timestamp: Date.now(), blob });
       };
       _droneRecorder.stop();
     };

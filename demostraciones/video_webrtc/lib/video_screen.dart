@@ -16,9 +16,21 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 //   index.html expone captureDroneFrame() y startDroneRecording()
 //   Dart llama a estas funciones sin tocar Python
 //
-// REQUISITO: añadir en index.html las funciones JS correspondientes
+//   NOTA: webrtc_video_sender.py también implementa captura/grabación
+//   server-side (PNG/mp4 vía comandos {"type":"capture"|"record_start"}).
+//   ESTE cliente NO usa esa vía: solo envía {"type":"detection_mode"} y
+//   captura/graba en el navegador. Las features server-side quedan ahí
+//   como referencia pero este demo no las dispara.
+//
+// REQUISITOS:
+//   1. index.html debe definir las funciones JS (captureDroneFrame, etc.)
+//   2. Arrancar el emisor: python webrtc_video_sender.py
+//      (deps: torch, opencv-python, aiortc, av, websockets)
+//   3. Poner en senderIP la IP de la máquina que corre ese script
+//      (misma red). senderPort debe coincidir con el del sender.
 // ============================================================
 
+// IP del PC que ejecuta webrtc_video_sender.py — CAMBIAR según tu red.
 const String senderIP = '192.168.0.84';
 const int senderPort  = 9999;
 

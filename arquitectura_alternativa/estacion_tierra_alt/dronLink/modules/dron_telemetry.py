@@ -22,11 +22,13 @@ def _send_telemetry_info(self, process_telemetry_info):
             'heading': self.heading,
             'state': self.state,
             'flightMode': self.flightMode,
-            'voltage_battery': self.voltage_battery,
-            'current_battery': self.current_battery,
-            'battery_remaining': self.battery_remaining,
-            'vx':self.vx,
-            'vy':self.vy
+            'voltage_battery':   getattr(self, 'voltage_battery', 0.0),
+            'current_battery':   getattr(self, 'current_battery', 0.0),
+            'battery_remaining': getattr(self, 'battery_remaining', 0.0),
+            'vx': getattr(self, 'vx', 0.0),
+            'vy': getattr(self, 'vy', 0.0),
+            
+
         }
         # llamo al callback
         if self.id == None:
