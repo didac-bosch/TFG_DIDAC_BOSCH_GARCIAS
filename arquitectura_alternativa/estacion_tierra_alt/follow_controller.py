@@ -1517,16 +1517,6 @@ class FollowController:
                 # en tu _video_loop actual, omitir estas dos guards por ahora
                 # y añadirlas cuando se integre la lectura de altitud.
 
-                # ── Debug HUD para Orbit ──────────────────────────────────────
-                cv2.putText(frame_bgr,
-                    f'ORBIT[{self._orbit_state}] lr:{lr:+d} fb:{int(fb):+d} '
-                    f'ud:{int(ud):+d} yaw:{int(yaw):+d}',
-                    (10, 95), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 255), 2)
-                cv2.putText(frame_bgr,
-                    f'dist:{orbit_dist_cm:.0f}cm ({orbit_dist_source}) '
-                    f'ramp:{self._orbit_ramp:.2f}',
-                    (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 180, 255), 2)
-
             # ── Latch pitch source para siguiente frame ───────────────
             # En orbit, las ramas internas ya actualizan _pitch_source_last
             # a 'tof_orbit'; no sobreescribir con el valor del Follow FSM.
@@ -1562,24 +1552,9 @@ class FollowController:
                 cv2.circle(frame_bgr, (int(self._target_smoothed_x_px),
                                     int(self._target_smoothed_y_px)), 5, (255, 0, 255), -1)
 
-            if pitch_source == 'tof':
-                tof_label = f'ToF:{current_tof_cm:.0f}cm'
-            elif pitch_source == 'tof_vision':
-                tof_label = f'VisD:{self._vision_dist_smoothed:.0f}cm'
-            else:
-                tof_label = f'BBox:{self._closeness_smoothed:.3f}'
-            cv2.putText(frame_bgr,
-                        f'Y:{int(yaw):+d} T:{int(ud):+d} FB:{int(fb):+d} [{tof_label}] {self._follow_status}',
-                        (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (250, 150, 0), 2)
-            cv2.putText(frame_bgr,
-                        f'miss:{self._tracking_miss_count} tof_inv:{self._tof_invalid_count}',
-                        (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (100, 200, 255), 2)
-            cv2.putText(frame_bgr,
-                        f'id:{self._target_id} gest:{self._gesture or "-"} '
-                        f'fps:{_fps_last:.1f}',
-                        (10, 145), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 255, 0), 2)
-            yolo_tick = (frame_count % YOLO_FRAME_STRIDE == 0)
-            cv2.putText(frame_bgr, '[YOLO]' if yolo_tick else '[EMA]', (10, 75), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 120), 2)
+            # HUD de texto (Y/T/FB, miss/tof_inv, id/gest/fps, [YOLO]/[EMA])
+            # eliminado a petición del usuario: el stream de follow/orbit va limpio
+            # de números y palabras; se mantienen solo el bbox y los círculos.
 
             with self._frame_lock:
                 out = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)

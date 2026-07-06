@@ -10,7 +10,7 @@ import '../core/js_bridges.dart';
 @JS('setDroneStreamRef')
 external void _jsSetDroneStreamRef();
 
-enum _TelloMode { none, flip, follow, orbit }
+enum _TelloMode { none, flip, follow, orbit, panorama }
 
 class TelloFlightScreen extends StatefulWidget {
   const TelloFlightScreen({super.key});
@@ -24,6 +24,7 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
   // false, esperando START) de "modo activo reseteado por la ET" (true→false).
   bool _prevFollow = false;
   bool _prevOrbit = false;
+  bool _prevPanorama = false;
 
   @override
   void initState() {
@@ -33,11 +34,13 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
       final p = context.read<DronProvider>();
       // Precedencia explícita en una sola asignación: con dos setState, si ambos
       // flags estuvieran true el segundo pisaba al primero.
-      final mode = p.isOrbitMode
-          ? _TelloMode.orbit
-          : p.isFollowMode
-              ? _TelloMode.follow
-              : _TelloMode.none;
+      final mode = p.isPanoramaMode
+          ? _TelloMode.panorama
+          : p.isOrbitMode
+              ? _TelloMode.orbit
+              : p.isFollowMode
+                  ? _TelloMode.follow
+                  : _TelloMode.none;
       if (mode != _TelloMode.none) setState(() => _activeMode = mode);
     });
   }
@@ -53,13 +56,16 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
         _activeMode == _TelloMode.follow && _prevFollow && !p.isFollowMode;
     final orbitReset =
         _activeMode == _TelloMode.orbit && _prevOrbit && !p.isOrbitMode;
-    if (followReset || orbitReset) {
+    final panoramaReset =
+        _activeMode == _TelloMode.panorama && _prevPanorama && !p.isPanoramaMode;
+    if (followReset || orbitReset || panoramaReset) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) setState(() => _activeMode = _TelloMode.none);
       });
     }
     _prevFollow = p.isFollowMode;
     _prevOrbit = p.isOrbitMode;
+    _prevPanorama = p.isPanoramaMode;
   }
 
   void _toggleMode(_TelloMode mode) {
@@ -533,12 +539,14 @@ class _ModePanel extends StatelessWidget {
       _TelloMode.flip => Icons.flip_camera_android,
       _TelloMode.follow => Icons.directions_run,
       _TelloMode.orbit => Icons.rotate_right,
+      _TelloMode.panorama => Icons.panorama_photosphere,
       _TelloMode.none => Icons.tune,
     };
     final String titleText = switch (activeMode) {
       _TelloMode.flip => 'FLIP MODE',
       _TelloMode.follow => 'FOLLOW MODE',
       _TelloMode.orbit => 'ORBIT MODE',
+      _TelloMode.panorama => 'PANORAMA 360',
       _TelloMode.none => '',
     };
 
@@ -587,6 +595,8 @@ class _ModePanel extends StatelessWidget {
             ),
           ],
           if (activeMode == _TelloMode.orbit) _OrbitButtons(provider: provider),
+          if (activeMode == _TelloMode.panorama)
+            _PanoramaButton(provider: provider),
         ],
       ),
     );
@@ -713,6 +723,39 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
           ),
         ],
         const SizedBox(height: 10),
+        // Toggle de grabación: si está activo al lanzar la órbita, se graba y se
+        // guarda en la galería al parar manualmente (la órbita no se detiene sola).
+        // Bloqueado mientras orbita (no cambiar el modo de grabación a mitad de vuelo).
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.fiber_manual_record,
+              size: 16,
+              color: widget.provider.orbitRecordEnabled
+                  ? AppColors.danger
+                  : AppColors.disabled,
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              'GRABAR ÓRBITA',
+              style: TextStyle(
+                color: AppColors.warning,
+                fontSize: 10,
+                fontWeight: FontWeight.bold,
+                letterSpacing: 1.0,
+              ),
+            ),
+            const SizedBox(width: 6),
+            Switch(
+              value: widget.provider.orbitRecordEnabled,
+              onChanged: isRunning
+                  ? null
+                  : (v) => context.read<DronProvider>().setOrbitRecord(v),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -742,18 +785,6 @@ class _OrbitButtonsState extends State<_OrbitButtons> {
                   context.read<DronProvider>().startOrbit(clockwise: true),
             ),
           ],
-        ),
-        const SizedBox(height: 12),
-        // Radio automático: la ET fija la distancia de órbita con el ToF del
-        // dron a la persona; ya no hay slider de radio manual.
-        const Text(
-          'Radio automático (distancia actual)',
-          style: TextStyle(
-            color: AppColors.warning,
-            fontSize: 9,
-            fontWeight: FontWeight.bold,
-            letterSpacing: 1.0,
-          ),
         ),
       ],
     );
@@ -1030,31 +1061,98 @@ class _ModeSelectorSheet extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 16),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _ModeOption(
-                icon: Icons.flip_camera_android,
-                label: 'FLIP',
-                active: activeMode == _TelloMode.flip,
-                onTap: () => onSelect(_TelloMode.flip),
-              ),
-              _ModeOption(
-                icon: Icons.directions_run,
-                label: 'FOLLOW',
-                active: activeMode == _TelloMode.follow,
-                onTap: () => onSelect(_TelloMode.follow),
-              ),
-              _ModeOption(
-                icon: Icons.rotate_right,
-                label: 'ORBIT',
-                active: activeMode == _TelloMode.orbit,
-                onTap: () => onSelect(_TelloMode.orbit),
-              ),
-            ],
+          // Scroll horizontal: los modos no caben todos en pantallas estrechas,
+          // así que la fila es arrastrable en vez de comprimirse.
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _ModeOption(
+                  icon: Icons.flip_camera_android,
+                  label: 'FLIP',
+                  active: activeMode == _TelloMode.flip,
+                  onTap: () => onSelect(_TelloMode.flip),
+                ),
+                const SizedBox(width: 12),
+                _ModeOption(
+                  icon: Icons.directions_run,
+                  label: 'FOLLOW',
+                  active: activeMode == _TelloMode.follow,
+                  onTap: () => onSelect(_TelloMode.follow),
+                ),
+                const SizedBox(width: 12),
+                _ModeOption(
+                  icon: Icons.rotate_right,
+                  label: 'ORBIT',
+                  active: activeMode == _TelloMode.orbit,
+                  onTap: () => onSelect(_TelloMode.orbit),
+                ),
+                const SizedBox(width: 12),
+                _ModeOption(
+                  icon: Icons.panorama_photosphere,
+                  label: 'PANO 360',
+                  active: activeMode == _TelloMode.panorama,
+                  onTap: () => onSelect(_TelloMode.panorama),
+                ),
+              ],
+            ),
           ),
         ],
       ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────
+// BOTÓN PANORAMA 360
+// ─────────────────────────────────────────────
+class _PanoramaButton extends StatelessWidget {
+  final DronProvider provider;
+  const _PanoramaButton({required this.provider});
+
+  @override
+  Widget build(BuildContext context) {
+    final bool running = provider.isPanoramaMode;
+    final (label, color) = switch (provider.panoramaStatus) {
+      'scanning' => ('⟳ SCANNING 360°', AppColors.warning),
+      'stitching' => ('… STITCHING', const Color(0xFF29B6F6)),
+      'done' => ('● SAVED', const Color(0xFF00E676)),
+      'error' => ('✕ FAILED', AppColors.danger),
+      _ => ('— OFF', AppColors.disabled),
+    };
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: color.withValues(alpha: 0.7)),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              color: color,
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ),
+        const SizedBox(height: 10),
+        _ActionBtn(
+          icon: running ? Icons.stop : Icons.panorama_photosphere,
+          label: running ? 'STOP' : 'START',
+          enabled: provider.isFlying,
+          color: AppColors.warning,
+          onTap: () {
+            final p = context.read<DronProvider>();
+            running ? p.stopPanorama() : p.startPanorama();
+          },
+        ),
+      ],
     );
   }
 }

@@ -23,6 +23,8 @@ class Constants {
   static const String topicFlip = 'mobileFlutter/groundStation/flip';
   static const String topicOrbit = 'mobileFlutter/groundStation/orbit';
   static const String topicFollowMode = 'mobileFlutter/groundStation/followMode';
+  // Panorama 360 — publicar: 'start' | 'stop'
+  static const String topicPanorama = 'mobileFlutter/groundStation/panorama360';
 
   // Camera
   static const String topicSetCamera = 'mobileFlutter/groundStation/setCamera';
@@ -49,4 +51,10 @@ class Constants {
   // Confirmaciones de modos Tello (autoritativas: 'on' | 'off')
   static const String topicFollowModeStatus = 'groundStation/mobileFlutter/followModeStatus';
   static const String topicOrbitStatus = 'groundStation/mobileFlutter/orbitStatus';
+  // Flip — avisos de rechazo (bateria baja / error del dron) para mostrar en la UI
+  static const String topicFlipStatus = 'groundStation/mobileFlutter/flipStatus';
+  // Panorama 360 — estado del escaneo: 'scanning'|'stitching'|'done'|'error'|'off'
+  static const String topicPanoramaStatus = 'groundStation/mobileFlutter/panoramaStatus';
+  // Panorama 360 — imagen final cosida (JPEG en base64), para la galería
+  static const String topicPanoramaReady = 'groundStation/mobileFlutter/panoramaReady';
 }

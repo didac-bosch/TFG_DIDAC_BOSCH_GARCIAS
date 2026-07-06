@@ -31,6 +31,15 @@ external String ezGetMediaUrl(String id);
 @JS('ezDeleteMedia')
 external void _jsDeleteMedia(String id);
 
+// Panorama 360 — guarda bytes (base64) en la galería (IndexedDB) y abre el
+// visor 360 interactivo (Three.js) declarados en index.html.
+@JS('ezPutMediaBytes')
+external void _jsPutMediaBytes(
+    String id, String type, String mime, String filename, String base64);
+
+@JS('openPanoramaViewer')
+external void openPanoramaViewer(String id);
+
 // Modos de control
 enum ControlMode { classic, voice, imu }
 
@@ -45,7 +54,7 @@ enum DroneConnectionMode { ardupilot, sitl, tello }
 // IndexedDB; aquí solo se persiste la metadata en localStorage.
 class MediaItem {
   final String id; // = millisecondsSinceEpoch como String
-  final String type; // 'photo' | 'video'
+  final String type; // 'photo' | 'video' | 'panorama'
   final String filename;
   final DateTime timestamp;
   final double? lat;
@@ -63,6 +72,7 @@ class MediaItem {
   });
 
   bool get isPhoto => type == 'photo';
+  bool get isPanorama => type == 'panorama';
   bool get hasGps => lat != null && lon != null && (lat != 0.0 || lon != 0.0);
 
   Map<String, dynamic> toJson() => {
@@ -413,6 +423,19 @@ class DronProvider extends ChangeNotifier {
 
   String orbitStatus = 'off';
   double orbitTofDistance = -1.0;
+  // Grabar la órbita: si está activo al iniciar, se graba el stream WebRTC y se
+  // guarda en la galería al parar manualmente la órbita. La órbita ya no se
+  // detiene sola (sin auto-stop a los 360): sigue hasta que el usuario pulsa STOP.
+  bool orbitRecordEnabled = false;
+  void setOrbitRecord(bool v) {
+    orbitRecordEnabled = v;
+    notifyListeners();
+  }
+
+  // Panorama 360 — activo mientras la ET escanea/cose; panoramaStatus refleja el
+  // estado autoritativo de la ET: 'off'|'scanning'|'stitching'|'done'|'error'.
+  bool isPanoramaMode = false;
+  String panoramaStatus = 'off';
 
   // metodos
 
@@ -867,6 +890,9 @@ class DronProvider extends ChangeNotifier {
       _mqtt.subscribe(Constants.topicCameraAction);
       _mqtt.subscribe(Constants.topicFollowModeStatus);
       _mqtt.subscribe(Constants.topicOrbitStatus);
+      _mqtt.subscribe(Constants.topicFlipStatus);
+      _mqtt.subscribe(Constants.topicPanoramaStatus);
+      _mqtt.subscribe(Constants.topicPanoramaReady);
       _mqtt.onMessageReceived = _handleMessage;
       _mqtt.onDisconnected = _handleMqttDisconnected;
 
@@ -1137,6 +1163,9 @@ class DronProvider extends ChangeNotifier {
     // El payload sólo lleva la dirección ("cw"/"ccw").
     final payload = clockwise ? 'cw' : 'ccw';
     _mqtt.publish(Constants.topicOrbit, payload);
+    // Grabar la órbita si el toggle está activo. La grabación se cierra al parar
+    // la órbita manualmente (stopOrbit). No hay auto-stop: graba hasta pulsar STOP.
+    if (orbitRecordEnabled && !isRecording) startRecording();
     notifyListeners();
   }
 
@@ -1144,6 +1173,8 @@ class DronProvider extends ChangeNotifier {
   void stopOrbit() {
     if (!isConnected || !isOrbitMode) return;
     isOrbitMode = false;
+    // Cerrar la grabación de la órbita en la parada manual (único camino de fin).
+    if (isRecording) stopRecording();
     if (isFlying) _mqtt.publish(Constants.topicOrbit, 'stop');
     // Sólo reactivar el joystick si seguimos en vuelo y NO en follow: arrancarlo
     // en follow contradiría la semántica (el timer debe estar parado) y enviaría
@@ -1176,6 +1207,38 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // -----------------------MODO PANORAMA 360----------------------------------
+  // Modo de medio vuelo: la ET gira el dron 360 en la altitud actual, cose la
+  // panoramica y la devuelve por MQTT (topicPanoramaReady). No despega ni
+  // aterriza. Excluyente con Follow/Orbit y con el joystick.
+  void startPanorama() {
+    if (!isConnected || !isFlying || isPanoramaMode) return;
+    // Cerrar Follow/Orbit en la UI: la ET tambien los para al recibir 'start'.
+    if (isOrbitMode) {
+      isOrbitMode = false;
+      _mqtt.publish(Constants.topicOrbit, 'stop');
+    }
+    if (isFollowMode) {
+      isFollowMode = false;
+      _mqtt.publish(Constants.topicFollowMode, 'false');
+    }
+    isPanoramaMode = true;
+    panoramaStatus = 'scanning';
+    _stopJoystickTimer();
+    _mqtt.publish(Constants.topicPanorama, 'start');
+    message = 'Panorama 360 — scanning...';
+    notifyListeners();
+  }
+
+  void stopPanorama() {
+    if (!isConnected || !isPanoramaMode) return;
+    isPanoramaMode = false;
+    panoramaStatus = 'off';
+    if (isFlying) _mqtt.publish(Constants.topicPanorama, 'stop');
+    if (isFlying && !isFollowMode && !isOrbitMode) _startJoystickTimer();
+    notifyListeners();
+  }
+
   //void sendTelloCommand(String command) {
   //if (!isConnected || !isFlying) return;
   //_mqtt.publish(Constants.topicTelloCommand, command);
@@ -1198,6 +1261,8 @@ class DronProvider extends ChangeNotifier {
     isLoading = false;
     isFollowMode = false;
     isOrbitMode = false;
+    isPanoramaMode = false;
+    panoramaStatus = 'off';
     message = 'MQTT connection lost — commands unavailable';
     notifyListeners();
   }
@@ -1280,6 +1345,8 @@ class DronProvider extends ChangeNotifier {
       activeMissionWaypoint = -1;
       isOrbitMode = false;
       isFollowMode = false;
+      isPanoramaMode = false;
+      panoramaStatus = 'off';
       message = 'Landed';
       notifyListeners();
       return;
@@ -1362,11 +1429,59 @@ class DronProvider extends ChangeNotifier {
         isOrbitMode = on;
         if (on) {
           _stopJoystickTimer();
-        } else if (isFlying && !isFollowMode) {
-          _startJoystickTimer();
+        } else {
+          // Órbita terminada (parada manual o cierre de la ET): red de seguridad
+          // para cerrar la grabación si aún estuviera activa y guardar el vídeo.
+          if (isRecording) stopRecording();
+          if (isFlying && !isFollowMode) _startJoystickTimer();
         }
         notifyListeners();
       }
+      return;
+    }
+
+    // --------------- TOPIC FLIP STATUS ---------------
+    // Aviso de rechazo del flip (bateria baja / error del dron). Se muestra en el
+    // HUD reutilizando el campo `message`.
+    if (topic == Constants.topicFlipStatus) {
+      message = payload;
+      notifyListeners();
+      return;
+    }
+
+    // --------------- TOPIC PANORAMA STATUS ---------------
+    // Estado autoritativo del escaneo. 'scanning'/'stitching' → en curso;
+    // 'off'/'error' → terminado sin imagen (reactivar joystick). 'done' se
+    // finaliza al llegar la imagen (topicPanoramaReady).
+    if (topic == Constants.topicPanoramaStatus) {
+      panoramaStatus = payload;
+      if (payload == 'scanning' || payload == 'stitching') {
+        isPanoramaMode = true;
+        _stopJoystickTimer();
+      } else if (payload == 'off' || payload == 'error') {
+        isPanoramaMode = false;
+        if (payload == 'error') message = 'Panorama failed';
+        if (isFlying && !isFollowMode && !isOrbitMode) _startJoystickTimer();
+      }
+      notifyListeners();
+      return;
+    }
+
+    // --------------- TOPIC PANORAMA READY ---------------
+    // La ET envía la panorámica cosida (JPEG en base64). Se guarda en la galería
+    // (IndexedDB) como tipo 'panorama' y cierra el modo.
+    if (topic == Constants.topicPanoramaReady) {
+      if (payload.isNotEmpty) {
+        final id = DateTime.now().millisecondsSinceEpoch.toString();
+        final filename = 'panorama_$id.jpg';
+        _jsPutMediaBytes(id, 'panorama', 'image/jpeg', filename, payload);
+        _registerMedia(id, 'panorama', filename);
+        message = 'Panorama 360 saved!';
+      }
+      isPanoramaMode = false;
+      panoramaStatus = 'off';
+      if (isFlying && !isFollowMode && !isOrbitMode) _startJoystickTimer();
+      notifyListeners();
       return;
     }
 
@@ -1386,6 +1501,8 @@ class DronProvider extends ChangeNotifier {
       isRecording = false;
       isFollowMode = false;
       isOrbitMode = false;
+      isPanoramaMode = false;
+      panoramaStatus = 'off';
       _waitingForConnect = false;
       detectionMode = DetectionMode.all;
       _waitingForArm = false;

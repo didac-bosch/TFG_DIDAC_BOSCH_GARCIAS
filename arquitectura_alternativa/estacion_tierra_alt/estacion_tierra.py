@@ -64,6 +64,8 @@ _pending_actions = []
 _follow_mode = False
 _orbit_active = False
 _orbit_thread = None
+_panorama_ctrl = None
+_panorama_active = False
 _ws = None
 
 # ============================================================
@@ -153,6 +155,7 @@ threading.Thread(target=_start_loop, args=(loop,), daemon=True).start()
 # ============================================================
 
 from follow_controller import FollowController
+from panorama_controller import PanoramaController
 
 _follow_ctrl: FollowController = None
 
@@ -164,6 +167,24 @@ def _on_follow_stream_dead():
     _follow_mode = False
     _orbit_active = False
     _follow_ctrl = None
+
+# --- Callbacks del modo Panorama 360 (invocados desde el hilo del controller) ---
+def _pub_panorama_status(status):
+    """Publica el estado del escaneo hacia Flutter. En estados terminales que no
+    sean 'done' (el 'done' lo cierra _on_panorama_done al entregar la imagen)
+    libera el flag de modo activo."""
+    global _panorama_active
+    client.publish('groundStation/mobileFlutter/panoramaStatus', status)
+    if status in ('error', 'off'):
+        _panorama_active = False
+
+def _on_panorama_done(b64):
+    """Entrega la panorámica final (base64) a Flutter para que la guarde en la
+    galería, y cierra el modo."""
+    global _panorama_active, _panorama_ctrl
+    client.publish('groundStation/mobileFlutter/panoramaReady', b64)
+    _panorama_active = False
+    _panorama_ctrl = None
 
 # ============================================================
 # MQTT callbacks
@@ -277,6 +298,7 @@ def handle_joystick(data_str):
             if tello is None: return
             if _follow_mode: return
             if _orbit_active: return
+            if _panorama_active: return
             if tello.state != 'flying': return
             # Envío directo en cada mensaje: al soltar el stick los ejes quedan
             # bajo la zona muerta -> _axis_to_rc devuelve 0 -> se manda rc(0,0,0,0).
@@ -303,7 +325,7 @@ def handle_joystick(data_str):
 
 def on_message(client, userdata, message):
     global _pc, _camera_track, flight_mode, camera_index, _follow_mode, tello, _follow_ctrl
-    global _orbit_active, _orbit_thread
+    global _orbit_active, _orbit_thread, _panorama_ctrl, _panorama_active
 
     parts = message.topic.split('/')
     command = parts[2] if len(parts) > 2 else "PARTS ERROR"
@@ -448,6 +470,12 @@ def on_message(client, userdata, message):
                 _orbit_active = False
                 if _orbit_thread and _orbit_thread.is_alive():
                     _orbit_thread.join(timeout=0.3)
+                # Parar tambien un escaneo Panorama en curso antes de aterrizar.
+                if _panorama_ctrl is not None:
+                    try: _panorama_ctrl.stop()
+                    except Exception: pass
+                    _panorama_ctrl = None
+                _panorama_active = False
                 def aterrizar_tello():
                     # Solo confirmamos 'landed' si el descenso se confirma por
                     # altura. Si no, reafirmamos 'flying' para que la UI mantenga
@@ -498,11 +526,24 @@ def on_message(client, userdata, message):
     if command == 'flip':
         if flight_mode == 'tello' and tello and tello.state == 'flying':
             d = message.payload.decode().strip()
-            # flip es un comando con respuesta: serializar con el lock unico del
-            # Tello para no cruzar respuestas con telemetría/tof/stream.
-            with tello._sdk_lock:
-                try: tello._tello.flip(d[0])
-                except Exception as e: print(f'[TELLO] Flip error: {e}')
+            # El firmware del Tello rechaza el flip con bateria < ~50% (responde
+            # 'error' tras 4 reintentos del SDK). Comprobar antes y avisar a Flutter
+            # en vez de intentarlo y fallar en silencio.
+            batt = getattr(tello, 'battery_pct', None)
+            if batt is not None and batt < 50:
+                msg = f'Bateria baja ({batt}%): flip no permitido'
+                print(f'[TELLO] {msg}')
+                client.publish('groundStation/mobileFlutter/flipStatus', msg)
+            else:
+                # flip es un comando con respuesta: serializar con el lock unico del
+                # Tello para no cruzar respuestas con telemetría/tof/stream.
+                with tello._sdk_lock:
+                    try:
+                        tello._tello.flip(d[0])
+                    except Exception as e:
+                        print(f'[TELLO] Flip error: {e}')
+                        client.publish('groundStation/mobileFlutter/flipStatus',
+                                       'Flip rechazado por el dron')
 
     if command == 'orbit':
         if flight_mode == 'tello' and tello and tello.state == 'flying':
@@ -604,6 +645,59 @@ def on_message(client, userdata, message):
                 print('[TELLO] Follow mode DESACTIVADO')
                 client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
 
+    if command == 'panorama360':
+        if flight_mode == 'tello' and tello and tello.state == 'flying':
+            payload_str = message.payload.decode().strip()
+
+            if payload_str == 'stop':
+                print('[PANORAMA] STOP recibido')
+                if _panorama_ctrl is not None:
+                    try: _panorama_ctrl.stop()
+                    except Exception: pass
+                    _panorama_ctrl = None
+                _panorama_active = False
+                client.publish('groundStation/mobileFlutter/panoramaStatus', 'off')
+
+            else:
+                # El escaneo gira el dron en sitio: es incompatible con Follow/Orbit
+                # (que tambien mandan RC). Pararlos antes de arrancar.
+                if _follow_mode:
+                    _follow_mode = False
+                    client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
+                if _orbit_active:
+                    _orbit_active = False
+                    client.publish('groundStation/mobileFlutter/orbitStatus', 'off')
+                if _follow_ctrl is not None:
+                    try: _follow_ctrl.stop()
+                    except Exception: pass
+                    _follow_ctrl = None
+
+                # Construir un PanoramaController fresco. Envuelto en try/except:
+                # un fallo al crear no debe matar on_message.
+                try:
+                    if _panorama_ctrl is not None:
+                        _panorama_ctrl.stop()
+                    _panorama_active = True
+                    _panorama_ctrl = PanoramaController(
+                        tello,
+                        on_status=_pub_panorama_status,
+                        on_done=_on_panorama_done,
+                    )
+                    print('[PANORAMA] Lanzado — escaneo 360 en la altitud actual')
+                    client.publish('groundStation/mobileFlutter/panoramaStatus', 'scanning')
+                except Exception as e:
+                    print(f'[PANORAMA] Error al lanzar: {e}')
+                    _panorama_active = False
+                    if _panorama_ctrl is not None:
+                        try: _panorama_ctrl.stop()
+                        except Exception: pass
+                        _panorama_ctrl = None
+                    client.publish('groundStation/mobileFlutter/panoramaStatus', 'off')
+        else:
+            # Precondición no cumplida (no Tello / no volando): rechazar y avisar.
+            print('[PANORAMA] Rechazado — Tello no conectado o no volando')
+            client.publish('groundStation/mobileFlutter/panoramaStatus', 'off')
+
     if command == 'detectionMode':
         mode = message.payload.decode()
         if _camera_track:
@@ -615,7 +709,12 @@ def on_message(client, userdata, message):
             if tello is None: return
             def desconectar_tello():
                 global _pc, _camera_track, _follow_mode, _follow_ctrl
-                global _orbit_active, _orbit_thread
+                global _orbit_active, _orbit_thread, _panorama_ctrl, _panorama_active
+                if _panorama_ctrl is not None:
+                    try: _panorama_ctrl.stop()
+                    except Exception: pass
+                    _panorama_ctrl = None
+                _panorama_active = False
                 _follow_mode = False
                 # Resetear también orbit: sin esto, _orbit_active queda True y el
                 # guard de handle_joystick bloquea el joystick tras reconectar

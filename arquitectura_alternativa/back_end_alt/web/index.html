@@ -103,6 +103,92 @@
       }).catch(e => console.error('IndexedDB delete:', e));
     };
 
+    // Guarda en la galería un medio recibido como base64 (p.ej. la panorámica
+    // 360 que cose la estación de tierra y envía por MQTT). Reconstruye el Blob
+    // y reutiliza _ezPutMedia (mismo store + object URL que fotos/vídeos).
+    window.ezPutMediaBytes = function (id, type, mime, filename, base64) {
+      try {
+        const bin = atob(base64);
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        const blob = new Blob([bytes], { type: mime });
+        _ezPutMedia({ id, type, mime, filename, timestamp: Date.now(), blob });
+      } catch (e) {
+        console.error('ezPutMediaBytes:', e);
+      }
+    };
+
+    // ------------ Visor 360 interactivo (Three.js) -------------------
+    // Porta visor_panorama360.py: abre la panorámica de la galería en una vista
+    // cilíndrica arrastrable (drag = girar 360º, rueda = zoom). Usa el object URL
+    // (blob:) ya cacheado; la ventana hija es del mismo origen y puede leerlo.
+    window.openPanoramaViewer = function (id) {
+      const url = window._ezMediaUrls[id];
+      if (!url) { console.warn('openPanoramaViewer: sin imagen para', id); return; }
+      const w = window.open('', '_blank');
+      if (!w) { console.warn('openPanoramaViewer: popup bloqueado'); return; }
+      const html = [
+        '<!DOCTYPE html><html lang="es"><head><meta charset="utf-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1">',
+        '<title>Panorama 360 del dron</title><style>',
+        'html,body{margin:0;height:100%;background:#111;overflow:hidden;font-family:system-ui,sans-serif;}',
+        '#c{display:block;width:100vw;height:100vh;cursor:grab;}#c:active{cursor:grabbing;}',
+        '#hint{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);color:#eee;',
+        'background:rgba(0,0,0,.45);padding:8px 14px;border-radius:20px;font-size:13px;',
+        'pointer-events:none;transition:opacity .6s;}',
+        '#close{position:fixed;top:12px;right:14px;z-index:10;display:flex;',
+        'align-items:center;justify-content:center;width:38px;height:38px;',
+        'border-radius:50%;background:rgba(0,0,0,.55);color:#fff;font-size:22px;',
+        'line-height:1;cursor:pointer;user-select:none;}',
+        '#close:hover{background:rgba(0,0,0,.8);}</style></head><body>',
+        '<canvas id="c"></canvas>',
+        '<div id="close" title="Cerrar (Esc)">&times;</div>',
+        '<div id="hint">Arrastra para girar 360&deg; &middot; rueda para acercar</div>',
+        '<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"><\/script>',
+        '<script>',
+        'function _closeViewer(){ try{ window.close(); }catch(e){} ',
+        '  if(!window.closed && window.history.length>1){ window.history.back(); } }',
+        'document.getElementById("close").addEventListener("click", _closeViewer);',
+        'addEventListener("keydown", function(e){ if(e.key==="Escape") _closeViewer(); });',
+        'var IMG = "' + url + '";',
+        'var scene = new THREE.Scene();',
+        'var camera = new THREE.PerspectiveCamera(75, innerWidth/innerHeight, 0.1, 100);',
+        'var renderer = new THREE.WebGLRenderer({canvas: document.getElementById("c"), antialias:true});',
+        'renderer.setSize(innerWidth, innerHeight);',
+        'renderer.setPixelRatio(Math.min(devicePixelRatio, 2));',
+        'var lon=0, lat=0, targetLon=0, targetLat=0;',
+        'new THREE.TextureLoader().load(IMG, function(tex){',
+        '  tex.colorSpace = THREE.SRGBColorSpace; tex.wrapS = THREE.RepeatWrapping;',
+        '  var w = tex.image.width, h = tex.image.height, r = 5;',
+        '  var height = 2*Math.PI*r*(h/w);',
+        '  var geo = new THREE.CylinderGeometry(r, r, height, 120, 1, true);',
+        '  geo.scale(-1, 1, 1);',
+        '  scene.add(new THREE.Mesh(geo, new THREE.MeshBasicMaterial({map: tex})));',
+        '});',
+        'var dragging=false, px=0, py=0; var el = renderer.domElement;',
+        'el.addEventListener("pointerdown", function(e){ dragging=true; px=e.clientX; py=e.clientY; });',
+        'addEventListener("pointerup", function(){ dragging=false; });',
+        'addEventListener("pointermove", function(e){ if(!dragging) return;',
+        '  targetLon -= (e.clientX-px)*0.15; targetLat += (e.clientY-py)*0.12;',
+        '  targetLat = Math.max(-55, Math.min(55, targetLat)); px=e.clientX; py=e.clientY;',
+        '  var hint=document.getElementById("hint"); if(hint) hint.style.opacity=0; });',
+        'el.addEventListener("wheel", function(e){ e.preventDefault();',
+        '  camera.fov = Math.max(35, Math.min(95, camera.fov + e.deltaY*0.03));',
+        '  camera.updateProjectionMatrix(); }, {passive:false});',
+        'addEventListener("resize", function(){ camera.aspect = innerWidth/innerHeight;',
+        '  camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); });',
+        '(function animate(){ requestAnimationFrame(animate);',
+        '  lon += (targetLon-lon)*0.1; lat += (targetLat-lat)*0.1;',
+        '  var phi = THREE.MathUtils.degToRad(90-lat), theta = THREE.MathUtils.degToRad(lon);',
+        '  camera.lookAt(Math.sin(phi)*Math.cos(theta), Math.cos(phi), Math.sin(phi)*Math.sin(theta));',
+        '  renderer.render(scene, camera); })();',
+        '<\/script></body></html>'
+      ].join('\n');
+      w.document.open();
+      w.document.write(html);
+      w.document.close();
+    };
+
     // ------------ Captura y grabación del stream WebRTC ---------------
     let _droneRecorder = null;
     let _droneChunks = [];

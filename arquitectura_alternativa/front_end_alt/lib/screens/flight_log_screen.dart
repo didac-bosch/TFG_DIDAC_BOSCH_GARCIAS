@@ -479,6 +479,12 @@ void _openMedia(BuildContext context, MediaItem item) {
     );
     return;
   }
+  // Las panorámicas 360 se abren en el visor interactivo (Three.js) en vez de
+  // mostrarse planas: arrastrar gira 360º, la rueda hace zoom.
+  if (item.isPanorama) {
+    openPanoramaViewer(item.id);
+    return;
+  }
   showDialog(
     context: context,
     barrierColor: Colors.black87,
@@ -588,7 +594,7 @@ class _MediaCard extends StatelessWidget {
               child: Stack(
                 fit: StackFit.expand,
                 children: [
-                  if (item.isPhoto && url.isNotEmpty)
+                  if ((item.isPhoto || item.isPanorama) && url.isNotEmpty)
                     Image.network(
                       url,
                       fit: BoxFit.cover,
@@ -613,6 +619,15 @@ class _MediaCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                  // Las panorámicas se abren en el visor 360: overlay indicativo.
+                  if (item.isPanorama)
+                    const Center(
+                      child: Icon(
+                        Icons.threesixty,
+                        color: Colors.white,
+                        size: 40,
+                      ),
+                    ),
                   // Insignia tipo
                   Positioned(
                     top: 6,
@@ -627,9 +642,11 @@ class _MediaCard extends StatelessWidget {
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Icon(
-                        item.isPhoto
-                            ? Icons.photo_camera
-                            : Icons.videocam,
+                        item.isPanorama
+                            ? Icons.panorama_photosphere
+                            : item.isPhoto
+                                ? Icons.photo_camera
+                                : Icons.videocam,
                         color: Colors.white,
                         size: 14,
                       ),
