@@ -7,8 +7,8 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
 
 
-
-class FlightScreen extends StatelessWidget {      //stateless + provider 
+// stateless widget con un provider que se suscribe a los cambiios y actualiza la pantalla
+class FlightScreen extends StatelessWidget {     
   const FlightScreen({super.key});
 
 
@@ -27,10 +27,9 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
 
 
 
+    // pantalla principal de vuelo, con barra superior de telemetría, zona media con joysticks y mapa/cámara, y barra inferior con botones de vuelo
     return Scaffold(
       backgroundColor: AppColors.background,
-
-
 
       body: Column(
         children: [
@@ -77,6 +76,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                     ],
                   ),
                 ),
+
                 // CENTRO - mensaje provider 
                 Expanded(
                   child: Container(
@@ -203,7 +203,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
 
 
 
-                // ZONA CENTRAL (por ahora mapa con ubicación del dron, falta intercambio con cámara)
+                // ZONA CENTRAL mapa con telemetría superpuesta y badge de GPS
                 Expanded(
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -212,7 +212,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                     ),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(12),
-                      child: Stack(                          // ← NUEVO: Stack para superponer badge
+                      child: Stack(                          // Stack para superponer badge
                         children: [
                           FlutterMap(    //Crea flutterMap de la librería flutter map
                             options: MapOptions(
@@ -395,7 +395,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
 
 
 
-                // ZONA DER. (por ahora flechas, cambiar a joystick)
+                // ZONA DER. (flechas de dirección)
                 Container(
                   width: 160,
                   color: AppColors.background,
@@ -497,7 +497,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed:
+                    onPressed:  // al pulsar, si no está cargando, conectado, armado y volando, llama a la función takeoff del provider
                         provider.isLoading ||
                             !provider.isConnected ||
                             !provider.isArmed ||
@@ -565,7 +565,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed:
+                    onPressed:  // llama a la función land del provider si no está cargando, conectado y volando
                         provider.isLoading ||
                             !provider.isConnected ||
                             !provider.isFlying
@@ -596,7 +596,7 @@ class FlightScreen extends StatelessWidget {      //stateless + provider
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed:
+                    onPressed:  // llama a la función rtl del provider si no está cargando, conectado y volando
                         provider.isLoading ||
                             !provider.isConnected ||
                             !provider.isFlying
@@ -644,7 +644,7 @@ Widget _buildTopTelemetry(IconData icon, String label, String value) { //funció
   );
 }
 
-// ← NUEVO: helper color badge GPS
+// helper color badge GPS
 Color _gpsColor(double accuracy) {
   if (accuracy <= 5) return Colors.green;
   if (accuracy <= 20) return Colors.orange;
@@ -674,19 +674,15 @@ class ContinuousButton extends StatefulWidget {   //statefull widget de los boto
 }
 
 
-
+// State del ContinuousButton, maneja la lógica de presionar y soltar el botón
 class _ContinuousButtonState extends State<ContinuousButton> {
   bool _isPressed = false;
-
-
 
   void _handlePressDown(_) {        //cuando está apretado =move
     if (!widget.isEnabled) return;
     setState(() => _isPressed = true);
     context.read<DronProvider>().startMove(widget.direction);
   }
-
-
 
   void _handlePressUp(_) {          //cuando se suelta = stop
     if (!widget.isEnabled) return;
@@ -695,7 +691,7 @@ class _ContinuousButtonState extends State<ContinuousButton> {
   }
 
 
-
+  // override del build, con un GestureDetector para detectar los eventos de presionar y soltar, y un AnimatedContainer para animar el cambio de tamaño y color del botón
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
@@ -736,12 +732,12 @@ class _ContinuousButtonState extends State<ContinuousButton> {
 }
 
 
-
+// calculo de la posición final del vector de velocidad para dibujar la flecha de dirección en el mapa, a partir de la velocidad en x e y y la posición actual
 LatLng _calcVelocityEndPoint(double lat, double lon, double vx, double vy) {
   final speed = sqrt(vx * vx + vy * vy);
   if (speed < 0.3) return LatLng(lat, lon); 
   final scale = 6.0;
-  final dlat = (vx * scale) / 111320;
+  final dlat = (vx * scale) / 111320; 
   final dlon = (vy * scale) / (111320 * cos(lat * pi / 180));
   return LatLng(lat + dlat, lon + dlon);
 }

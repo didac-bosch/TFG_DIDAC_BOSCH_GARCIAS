@@ -83,7 +83,7 @@ class HttpLogic {
 
 
 
-  //get status.      (http.get)
+  // se hace un GET request a la URL de status y se devuelve un Map con los datos de estado del dron. Si hay error de conexión o el servidor devuelve un código distinto a 200, se lanza una excepción.
   Future<Map<String, dynamic>> getStatus() async {
     try {
       final response = await http.get(
@@ -99,7 +99,7 @@ class HttpLogic {
     }
   }
 
-  //post request.     (http.post)
+  // se hace un POST request a la URL dada y se lanza una excepción si hay error de conexión o el servidor devuelve un código distinto a 200.
   Future<void> _sendPostRequest(String url) async {
     try {
       final response = await http.post(Uri.parse(url));

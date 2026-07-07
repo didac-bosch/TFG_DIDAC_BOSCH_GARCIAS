@@ -3,29 +3,28 @@ import 'package:shelf_router/shelf_router.dart';
 import 'dart:convert';
 import 'mqtt_logic.dart';
 
+// Tópicos MQTT para enviar comandos a la estación tierra (mobileFlutter/groundStation/<action>)
 const String topicConnect =
-    'mobileFlutter/groundStation/connect'; //tópicos mqtt para enviar a la estación tierra (origen/destino/accion)
+    'mobileFlutter/groundStation/connect';
 const String topicArm = 'mobileFlutter/groundStation/arm';
 const String topicDisconnect = 'mobileFlutter/groundStation/disconnect';
 const String topicTakeoff = 'mobileFlutter/groundStation/takeoff';
 const String topicLand = 'mobileFlutter/groundStation/land';
 const String topicRTL = 'mobileFlutter/groundStation/rtl';
 const String topicSpeed = 'mobileFlutter/groundStation/speed';
+const String topicMove = 'mobileFlutter/groundStation/move'; 
 
-//PROVISIONIAL ANTES DE JOYSTICKS
-const String topicMove =
-    'mobileFlutter/groundStation/move'; ////////////////////////////////////////////////////////////////////////////////////
-
+// Función para construir el router con las rutas HTTP y la lógica MQTT
 Router buildRouter(MqttService mqtt) {
   //constructor router
   final router = Router();
 
+  // mecanismo CORS para permitir peticiones desde el frontend (obligatorio para que el navegador no bloquee las peticiones)
   Map<String, String> corsHeaders = {
-    //mecanismo seguridad bloqueo peticiones http
     'Access-Control-Allow-Origin':
         '*', //permite peticiones desde cualquier origen
     'Access-Control-Allow-Methods':
-        'GET, POST, OPTIONS', //lista de métodos http permitidos (IR AMPLIANDO!!!)
+        'GET, POST, OPTIONS', //lista de métodos http permitidos 
     'Access-Control-Allow-Headers':
         'Content-Type', //indica cabeceras que puede incluir el cliente en las peticiones
     'Content-Type': 'application/json', //indica que respuestas serán Json
@@ -149,7 +148,7 @@ Router buildRouter(MqttService mqtt) {
     );
   });
 
-  // OPTIONS                      //preflight request para que el navegador no bloquee peticiones
+  // OPTIONS /<path> para manejar preflight requests de CORS (obligatorio para que el navegador no bloquee las peticiones)
   router.add('OPTIONS', '/<path|.*>', (Request request) {
     return Response.ok('', headers: corsHeaders);
   });

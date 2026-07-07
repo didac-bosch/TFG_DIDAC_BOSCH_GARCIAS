@@ -2,12 +2,14 @@ import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'dart:convert';
 
+// Clase para manejar la conexión MQTT y la lógica de suscripción/publicación
 class MqttService {
   static const String _broker = 'broker.hivemq.com'; //intermediario
   static const int _port = 1883; //puerto estándard mqtt
   static const String _clientId = 'dart_backend_tfg'; //Id cliente
 
-  late MqttServerClient _client; //Estados iniciales
+// variables de estado (late para inicializar después de la conexión)
+  late MqttServerClient _client; 
   bool isConnected = false;
   bool dronArmed = false;
   bool dronConnected = false;
@@ -25,27 +27,31 @@ class MqttService {
   double telemetryVx = 0.0;
   double telemetryVy = 0.0;
 
+  // Método para conectar al broker MQTT
   Future<void> connect() async {
     _client = MqttServerClient(_broker, _clientId);
     _client.port = _port;
     _client.logging(on: false);
-    _client.keepAlivePeriod = 60; //si no recibe este ping se desconecta automáticamente
+    _client.keepAlivePeriod = 60; // keepalive period, si en 60 segundos no hay comunicación, se considera desconectado
 
     _client.onDisconnected = () {
       isConnected = false;
       print('MQTT DISCONNECTED');
     };
 
+    // Intentamos conectar al broker
     try {
       await _client.connect();
       isConnected = true;
       print('MQTT connected to broker: $_broker');
 
+      // Suscribirse a los topics de groundStation/mobileFlutter/
       _client.subscribe(
         'groundStation/mobileFlutter/#',
         MqttQos.atLeastOnce,
-      ); //suscripción a tópicos groundStation/mobileFlutter/
+      ); 
 
+      // Escuchar los mensajes entrantes
       _client.updates!.listen((
         List<MqttReceivedMessage<MqttMessage>> messages,
       ) {
@@ -61,6 +67,8 @@ class MqttService {
         }
 
         //actualización de estado por tópicos. (broker solo entrega uno a la vez, por eso no son ifelse)
+
+        // topics de telemetría, se actualizan las variables de telemetría según el topic recibido
         if (topic == 'groundStation/mobileFlutter/telemetry') {
           try {
             //si se envía telemetría se decodifica si se puede
@@ -80,7 +88,7 @@ class MqttService {
           }
         }
 
-        //otros topics
+        // topics de estado del dron, se actualizan las variables de estado según el topic recibido
         if (topic == 'groundStation/mobileFlutter/connected') {
           dronConnected = true;
           print('dron connected detected in backend');
@@ -102,12 +110,13 @@ class MqttService {
           dronArmed = false;
           print('dron landed detected in backend');
         }
+
+        // topic disconnect, se resetea todo
         if (topic == 'groundStation/mobileFlutter/disconnected') {
           dronArmed = false;
           dronConnected = false;
           dronFlying = false;
 
-          //reset telemetría
           telemetryAlt = 0.0;
           telemetryBat = 0.0;
           telemetrySpeed = 0.0;
@@ -124,6 +133,7 @@ class MqttService {
     }
   }
 
+  // publish para enviar mensajes al broker
   void publish(String topic, String payload) {
     if (!isConnected) {
       print('Not able to publish, MQTT not connected.');

@@ -7,8 +7,8 @@ import 'flight_screen.dart';
 
 
 
-class SetupScreen extends StatelessWidget {             //stateless widget con un provider para evitar sobreuso de statefull, 
-                                                        //provider reconstruye lo justo y necesario 
+// Stateless widget con un provider que se suscribe a los cambiios y actualiza la pantalla
+class SetupScreen extends StatelessWidget {            
   const SetupScreen({super.key});
 
 
@@ -19,12 +19,12 @@ class SetupScreen extends StatelessWidget {             //stateless widget con u
 
 
 
-    //pantalla
+    //pantalla principal de setup, con appbar, logo, mensaje de estado, campos de configuración y botones
     return Scaffold(
       backgroundColor: AppColors.background,
       //appBar
       appBar: AppBar(
-        title: const Text('EZDRONE', style: TextStyles.title),   //CAMBIAR A TITULO CORRESPONDIENTE SI NO ME DECIDO POR ESTE
+        title: const Text('EZDRONE', style: TextStyles.title),   
         backgroundColor: AppColors.surface,
         foregroundColor: AppColors.textPrimary,
         elevation: 0,

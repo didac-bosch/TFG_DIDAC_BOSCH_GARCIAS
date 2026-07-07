@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+// ESTILOS Y COLORES para tener un diseño consistente en toda la app, se pueden modificar aquí y se aplicará en todas las pantallas
 class AppColors {
   //COLORES
   static const Color background    = Color(0xFF1E1E2E);

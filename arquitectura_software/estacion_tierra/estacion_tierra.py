@@ -5,11 +5,15 @@ import time
 import json
 from dronLink.Dron import Dron
 
+# Configuración del broker MQTT y su puerto
 BROKER = 'broker.hivemq.com'
 PORT   = 1883
 
+
+# variables globales
 _monitoring = False
 
+# Función de callback para la conexión al broker MQTT
 def on_connect(client, userdata, flags, rc):
     if rc == 0:         #Return code = 0 - conexión exitosa
         print('Ground Station connected :)')
@@ -22,6 +26,7 @@ def process_telemetry_info(telemetry_info):
     payload = json.dumps(telemetry_info)
     client.publish('groundStation/mobileFlutter/telemetry', payload)    #publicación datos telemetría de vuelta 
 
+# función para monitorizar el estado de armado de los motores del dron
 def monitor_arm_state():
     global _monitoring
 
@@ -44,7 +49,8 @@ def monitor_arm_state():
 
     _monitoring = False
 
-def on_message(client, userdata, message):      #extracción de la acción
+# on_message callback para manejar los mensajes recibidos en los tópicos suscritos
+def on_message(client, userdata, message):      
     parts   = message.topic.split('/')
     command = parts[2]
     print(f'Command: {command}')
@@ -56,7 +62,7 @@ def on_message(client, userdata, message):      #extracción de la acción
             dron.connect('tcp:127.0.0.1:5763', 115200)    #dirección simulador, cambiar para dron real!
             print('Drone connected!')
            
-            dron.frequency = 2
+            dron.frequency = 2 # frecuencia de envío de telemetría (Hz)
             dron.send_telemetry_info(process_telemetry_info)
            
             client.publish('groundStation/mobileFlutter/connected', 'connected')

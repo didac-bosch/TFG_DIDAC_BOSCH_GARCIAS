@@ -2,8 +2,9 @@ import 'package:flutter/material.dart';
 import 'data/http_logic.dart';
 import 'dart:async';
 import 'package:latlong2/latlong.dart';
-import 'package:geolocator/geolocator.dart';   // ← NUEVO
+import 'package:geolocator/geolocator.dart';   
 
+// Provider para manejar el estado de la aplicación y la comunicación con el backend
 class DronProvider extends ChangeNotifier {
   //notify Listeners() que ayudará a reconstruir todos los widgets que estén suscritos
   final HttpLogic _httpLogic = HttpLogic();
@@ -39,7 +40,7 @@ class DronProvider extends ChangeNotifier {
   DateTime? _armDeadline;
   bool _armConfirmed = false;
 
-  // GPS usuario                               // ← NUEVO
+  // GPS usuario                              
   LatLng? userPosition;
   double gpsAccuracy = 0;
   StreamSubscription<Position>? _gpsSubscription;
@@ -47,7 +48,7 @@ class DronProvider extends ChangeNotifier {
   void setAltitude(String altValue) {   //set altitude pero solo si está dentro del margen
     final alt = double.tryParse(altValue);
 
-    if (alt == null || alt < 2.0 || alt > 50.0) {
+    if (alt == null || alt < 2.0 || alt > 50.0) { // si no está dentro del rango, isConfigValid = false
       isConfigValid = false;
       notifyListeners();
       return;
@@ -61,7 +62,7 @@ class DronProvider extends ChangeNotifier {
   void setSpeed(String speedValue) async {    //set speed solo si está dentro del margen 
     final speed = double.tryParse(speedValue);
 
-    if (speed == null || speed < 1.0 || speed > 15.0) {
+    if (speed == null || speed < 1.0 || speed > 15.0) { // si no está dentro del rango, isConfigValid = false
       isConfigValid = false;
       notifyListeners();
       return;
@@ -81,7 +82,7 @@ class DronProvider extends ChangeNotifier {
     }
   }
 
-  ///////////// GPS USUARIO /////////////        // ← NUEVO
+  // GPS del usuario, se solicita permiso y se empieza a escuchar la posición del usuario. Se actualiza userPosition y gpsAccuracy y se notifica a los listeners.
   Future<void> startGPS() async {
     final permission = await Geolocator.requestPermission();
     if (permission == LocationPermission.denied ||
@@ -105,7 +106,8 @@ class DronProvider extends ChangeNotifier {
     });
   }
 
-  void stopGPS() {                              // ← NUEVO
+  // para el GPS del usuario, se cancela la suscripción y se limpia userPosition y gpsAccuracy. Se notifica a los listeners.
+  void stopGPS() {                             
     _gpsSubscription?.cancel();
     _gpsSubscription = null;
     userPosition = null;
@@ -195,7 +197,7 @@ class DronProvider extends ChangeNotifier {
       message = "$error";
     } finally {
       stopPolling(); //al estar desconectado no necesita saber nada más
-      stopGPS();     // ← NUEVO: para GPS al desconectar
+      stopGPS();    
       isLoading = false;
       notifyListeners();
     }
@@ -268,6 +270,7 @@ class DronProvider extends ChangeNotifier {
     }
   }
 
+  /////////// PARAR /////////////
   Future<void> stopMove() async {
     if (!isConnected || !isFlying) return;
 
@@ -281,6 +284,7 @@ class DronProvider extends ChangeNotifier {
   ///////////// POLLING /////////////
   Timer? _statusTimer;
 
+  // polling para recibir telemetría y estado del dron cada 500ms. Se actualiza el estado interno y se notifica a los listeners.
   void startPolling() {
     _statusTimer
         ?.cancel(); //para evitar duplicados, cancela timers si se pulsa arm dos veces por ejemplo
@@ -295,7 +299,7 @@ class DronProvider extends ChangeNotifier {
         final status = await _httpLogic.getStatus();
         final armed = status['armed'] as bool; //mira si está armado
         final connected = status['connected'] as bool; //mira si está conectado
-        final flying = status['flying'] as bool;
+        final flying = status['flying'] as bool; //mira si está volando
 
         // Leer telemetría completa
         final alt = (status['alt'] as num).toDouble();
@@ -339,7 +343,7 @@ class DronProvider extends ChangeNotifier {
           _armConfirmed = false;
           message = "Awaiting orders";
           stopPolling();
-          stopGPS();    // ← NUEVO: para GPS si se desconecta inesperadamente
+          stopGPS();    
           notifyListeners();
           return;
         }

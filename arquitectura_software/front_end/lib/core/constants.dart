@@ -1,3 +1,5 @@
+
+// Conjunto constantes para no tener que escribirlas en cada request y poder cambiarlas fácilmente en un futuro
 class Constants {
   static const String backendUrl =
       'http://localhost:8080'; //Cambiar a IP correspondiente!!!!
@@ -11,11 +13,7 @@ class Constants {
   static const String endpointLand = '$backendUrl/land';
   static const String endpointRTL = '$backendUrl/rtl';    
   static const String endpointSpeed = '$backendUrl/speed';
-
-  //Provisional antes de joysticks
   static const String endpointMove = '$backendUrl/move';
 
 
-
-  //ir añadiendo más comandos aquí en un futuro
 }
