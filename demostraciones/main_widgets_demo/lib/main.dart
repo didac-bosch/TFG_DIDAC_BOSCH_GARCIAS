@@ -10,46 +10,35 @@ import 'package:flutter/material.dart';
 // WIDGETS DEMOSTRADOS:
 //
 // 1. ElevatedButton.icon — Botones de acción principal
-//    Usados en: SetupScreen (CONNECT, START FLIGHT, DISCONNECT)
-//               FlightScreen (ARM, TAKEOFF, LAND, RTL, DISCONNECT)
 //    Estados: enabled / disabled
 //    Colores semáforo: primary (verde), warning (naranja), danger (rojo)
 //
-// 2. GestureDetector + AnimatedContainer — Botón táctico con borde
-//    Usados en: HudButton (Tello), FlipBtn, ModeChip, ConnectionChip
+// 2. GestureDetector + AnimatedContainer — Botón con borde
 //    Comportamiento: borde coloreado, fondo semitransparente activo,
 //    animación de 150ms en press y en estado active/inactive
 //
 // 3. GestureDetector + Container — Botón icono compacto
-//    Usados en: swap mapa/cámara, captura foto, grabar, switch cámara
 //    Sin animación explícita; color de fondo y borde indican estado
 //
 // 4. GestureDetector (onLongPressStart/End + onTapDown/Up) — Presión continua
-//    Usado en: buildAltButton (IMU screen) para subir/bajar altitud
 //    La acción se activa mientras el dedo está presionado
 //
 // 5. Slider — Control de zoom de cámara
-//    Usado en: FlightScreen, zona lateral (portrait) y horizontal (landscape)
 //    Rango 1.0–5.0, 8 divisiones, coloreado con AppColors.primary
 //
 // 6. DropdownButton — Selector de modo de detección YOLO
-//    Usado en: DetectionDropdown dentro de FlightScreen (sobre el vídeo)
 //    Fondo oscuro, icono pequeño, sin subrayado
 //
 // 7. ModeChip / ConnectionChip — Selector exclusivo tipo chip
-//    Usados en: ModeSelector (Classic/Voice/IMU) y DroneConnectionModeSelector
 //    AnimatedContainer 200ms; borde de 2px del color del modo cuando seleccionado
 //
 // 8. ModalBottomSheet + DraggableScrollableSheet — Hoja de ayuda arrastrable
-//    Usados en: showHelpSheet() (SetupScreen), ModeSelectorSheet (TelloFlightScreen)
 //    showModalBottomSheet con isScrollControlled; tamaños 0.75/0.4/0.92
 //
 // 9. AlertDialog — Diálogo de confirmación
-//    Usado en: borrar waypoints (FlightPlanScreen), error de conexión (SetupScreen)
 //    backgroundColor = surface; acción Cancel + acción destructiva (danger)
 //
 // 10. ReorderableListView — Lista reordenable con drag handle
-//    Usados en: waypoints (FlightPlanScreen) y registros (FlightLogScreen)
 //    buildDefaultDragHandles: false + ReorderableDragStartListener manual
 //
 // PALETA DE COLORES (AppColors):
@@ -75,15 +64,14 @@ class AppColors {
   static const Color disabled = Color(0xFF555566);
 }
 
+
+
 void main() {
   runApp(
     const MaterialApp(debugShowCheckedModeBanner: false, home: WidgetsDemo()),
   );
 }
 
-// ============================================================
-// PANTALLA PRINCIPAL
-// ============================================================
 class WidgetsDemo extends StatefulWidget {
   const WidgetsDemo({super.key});
 
@@ -92,30 +80,31 @@ class WidgetsDemo extends StatefulWidget {
 }
 
 class _WidgetsDemoState extends State<WidgetsDemo> {
-  // --- Estado de los widgets interactivos ---
 
-  // ElevatedButton: simulamos estado de vuelo
+//--------------- variables de estado ----------------- 
+
+  // Simulación de estado de conexión y vuelo para ElevatedButton.icon (widget 1)
   bool _isConnected = false;
   bool _isArmed = false;
   bool _isFlying = false;
 
-  // GestureDetector táctico (HudButton)
+  // Simulación de estado de HUD (widget 2)
   bool _hudActive = false;
 
-  // Botón icono compacto
+  // Botón icono compacto (widget 3)
   bool _isRecording = false;
 
-  // Presión continua (altitud)
+  // Presión continua (widget 4)
   bool _altUpPressed = false;
   bool _altDownPressed = false;
 
-  // Slider (zoom)
+  // Slider para simular zoom de cámara (widget 5)
   double _zoom = 1.0;
 
-  // Dropdown (detección YOLO)
+  // Dropdown para simular tipo de detección YOLO (widget 6)
   String _detectionMode = 'Todos';
 
-  // Chips de modo
+  // Chips de modo de control y modo de conexión (widget 7)
   String _controlMode = 'Classic';
   String _connMode = 'ArduPilot';
 
@@ -127,6 +116,8 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
     'WP 4 — 41.27580, 1.98810',
   ];
 
+
+  // -------------- PANTALLA PRINCIPAL -----------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -150,31 +141,32 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ---- 1. ElevatedButton.icon ----
+
+
+            // ---- 1. ElevatedButton.icon ----------------------------------------------------------------------------------
             _sectionHeader(
               '1. ElevatedButton.icon',
               '— Botones de acción principal',
             ),
             _codeNote(
-              'Usado en: SetupScreen (CONNECT, START FLIGHT) y FlightScreen (ARM, TAKEOFF, LAND, RTL, DISCONNECT).\n'
-              'El color cambia según el estado del vuelo. onPressed = null, botón deshabilitado automáticamente.',
+              'Estados posibles: enabled / disabled.\n'
             ),
             const SizedBox(height: 12),
-            // Fila ARM/TAKEOFF/LAND/RTL/DISCONNECT como en FlightScreen
+            // Fila ARM/TAKEOFF/LAND/RTL/DISCONNECT  para simular flujo de vuelo
             Row(
               children: [
                 Expanded(
-                  child: ElevatedButton.icon(
-                    icon: const Icon(Icons.power_settings_new, size: 16),
+                  child: ElevatedButton.icon(                                                    // ELEVATED BUTTON ARM
+                    icon: const Icon(Icons.power_settings_new, size: 16),                        // ICONO
                     label: const Text(
-                      'ARM',
+                      'ARM',                                                                     // TEXTO
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    style: ElevatedButton.styleFrom(
-                      // Verde si no armado, rojo si armado (igual que EZDrone)
+                    style: ElevatedButton.styleFrom(                                              // ESTILO 
+                      // Verde si no armado, rojo si armado 
                       backgroundColor: _isArmed
                           ? AppColors.danger
                           : AppColors.warning,
@@ -185,15 +177,17 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    // Solo habilitado si conectado, no armado y no volando
-                    onPressed: !_isConnected || _isArmed || _isFlying
-                        ? null
+
+                    onPressed: !_isConnected || _isArmed || _isFlying                              // ACCIÓN
+
+                    // Si no está conectado, o ya está armado, o está volando, el botón se deshabilita (null)
+                        ? null  
                         : () => setState(() => _isArmed = true),
                   ),
                 ),
                 const SizedBox(width: 6),
-                Expanded(
-                  child: ElevatedButton.icon(
+                Expanded( 
+                  child: ElevatedButton.icon(                                                      // ELEVATED BUTTON TAKEOFF
                     icon: const Icon(Icons.flight_takeoff, size: 16),
                     label: const Text(
                       'TAKEOFF',
@@ -211,14 +205,14 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: !_isConnected || !_isArmed || _isFlying
+                    onPressed: !_isConnected || !_isArmed || _isFlying    // si no está conectado, o no está armado, o ya está volando, el botón se deshabilita (null)
                         ? null
                         : () => setState(() => _isFlying = true),
                   ),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: ElevatedButton.icon(
+                  child: ElevatedButton.icon(                                                          // ELEVATED BUTTON LAND
                     icon: const Icon(Icons.flight_land, size: 16),
                     label: const Text(
                       'LAND',
@@ -236,7 +230,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: !_isFlying
+                    onPressed: !_isFlying   // si no está volando, el botón se deshabilita (null)
                         ? null
                         : () => setState(() {
                             _isFlying = false;
@@ -246,7 +240,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 ),
                 const SizedBox(width: 6),
                 Expanded(
-                  child: ElevatedButton.icon(
+                  child: ElevatedButton.icon(                                                              // ELEVATED BUTTON DISC
                     icon: const Icon(Icons.link_off, size: 16),
                     label: const Text(
                       'DISC',
@@ -264,7 +258,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                     ),
-                    onPressed: !_isConnected || _isArmed || _isFlying
+                    onPressed: !_isConnected || _isArmed || _isFlying   // si no está conectado, o está armado, o está volando, el botón se deshabilita (null)
                         ? null
                         : () => setState(() => _isConnected = false),
                   ),
@@ -275,9 +269,9 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
             // CONNECT / START FLIGHT (ancho completo, como SetupScreen)
             SizedBox(
               width: double.infinity,
-              height: 48,
-              child: ElevatedButton.icon(
-                icon: const Icon(Icons.link),
+              height: 48, 
+              child: ElevatedButton.icon(                                                                  // ELEVATED BUTTON CONNECT  
+                icon: const Icon(Icons.link), 
                 label: Text(
                   _isConnected ? 'CONNECTED ✓' : 'CONNECT',
                   style: const TextStyle(
@@ -295,34 +289,36 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: _isConnected
+                onPressed: _isConnected   // si ya está conectado, el botón se deshabilita (null)
                     ? null
                     : () => setState(() => _isConnected = true),
               ),
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 2. GestureDetector + AnimatedContainer (HudButton táctico) ----
+
+
+            // ---- 2. GestureDetector + AnimatedContainer ------------------------------------------------------------------------------------------
             _sectionHeader(
               '2. GestureDetector + AnimatedContainer',
               '— Botón táctico con borde',
             ),
             _codeNote(
-              'Usado en: HudButton (TelloFlightScreen), FlipBtn, ModeOption.\n'
-              'AnimatedContainer con duration 150ms anima el color de fondo y el grosor del borde.\n'
-              'active: fondo semitransparente del color + borde de 1.5px; inactivo: fondo oscuro + borde disabled.',
+              'AnimatedContainer con duration 150ms. Fondo semitransparente y borde coloreado cuando está activo.\n'
             ),
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _HudButton(
+                _HudButton(                                     // = GestureDetector + AnimatedContainer (Construido en el widget _HudButton)
                   icon: Icons.flight_takeoff,
                   label: 'TAKEOFF',
                   color: AppColors.primary,
                   enabled: true,
                   active: _hudActive,
-                  onTap: () => setState(() => _hudActive = !_hudActive),
+                  onTap: () => setState(() => _hudActive = !_hudActive),  // onTap alterna el estado activo del botón
                 ),
                 const SizedBox(width: 12),
                 _HudButton(
@@ -331,7 +327,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   color: AppColors.warning,
                   enabled: true,
                   active: false,
-                  onTap: () {},
+                  onTap: () {}, // onTap no hace nada, pero el botón está habilitado
                 ),
                 const SizedBox(width: 12),
                 _HudButton(
@@ -340,32 +336,35 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   color: AppColors.danger,
                   enabled: false, // deshabilitado, icono y texto en disabled
                   active: false,
-                  onTap: () {},
+                  onTap: () {},   // onTap no hace nada, pero el botón está deshabilitado
                 ),
               ],
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 3. GestureDetector + Container (icono compacto) ----
+
+
+            // ---- 3. GestureDetector + Container  --------------------------------------------------------------------------
+
             _sectionHeader(
               '3. GestureDetector + Container',
               '— Botón icono compacto',
             ),
             _codeNote(
-              'Usado en: swap mapa/cámara, captura foto, grabar vídeo, cambiar cámara (FlightScreen).\n'
-              'Sin AnimatedContainer; el color de fondo y el borde reflejan el estado directamente.\n'
-              'El botón REC cambia a danger cuando _isRecording = true.',
+             'GestureDetector con Container simple. Fondo y borde indican estado activo/inactivo.\n'
             ),
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 // Captura foto
-                _IconCompactButton(
+                _IconCompactButton(                       // = GestureDetector + Container (Construido en el widget _IconCompactButton)
                   icon: Icons.camera_alt,
                   active: false,
                   activeColor: AppColors.primary,
-                  onTap: () {},
+                  onTap: () {},     // onTap no hace nada, pero el botón está habilitado
                 ),
                 const SizedBox(width: 10),
                 // Grabar (toggle)
@@ -375,7 +374,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                       : Icons.fiber_manual_record,
                   active: _isRecording,
                   activeColor: AppColors.danger,
-                  onTap: () => setState(() => _isRecording = !_isRecording),
+                  onTap: () => setState(() => _isRecording = !_isRecording),  // onTap alterna el estado de grabación
                 ),
                 const SizedBox(width: 10),
                 // Switch cámara
@@ -383,7 +382,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   icon: Icons.cameraswitch,
                   active: false,
                   activeColor: AppColors.primary,
-                  onTap: () {},
+                  onTap: () {}, // onTap no hace nada, pero el botón está habilitado
                 ),
                 const SizedBox(width: 10),
                 // Swap mapa/cámara
@@ -391,32 +390,33 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   icon: Icons.map,
                   active: false,
                   activeColor: AppColors.primary,
-                  onTap: () {},
+                  onTap: () {}, // onTap no hace nada, pero el botón está habilitado
                 ),
               ],
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 4. Presión continua (altitud) ----
+
+
+            // ---- 4. Presión continua -----------------------------------------------------------------------------------------------
             _sectionHeader(
               '4. GestureDetector (onLongPress + onTapDown)',
               '— Presión continua',
             ),
             _codeNote(
-              'Usado en: buildAltButton (ImuFlightScreen) para subir/bajar altitud.\n'
-              'onLongPressStart / onTapDown, activa el eje lY del joystick (+1.0 o -1.0).\n'
-              'onLongPressEnd / onTapUp / onTapCancel, devuelve lY a 0.0.\n'
-              'El borde cambia a primary (subir) o warning (bajar) mientras se mantiene presionado.',
+              'onLongPressStart/End + onTapDown/Up permiten detectar presión continua.\n'
             ),
             const SizedBox(height: 12),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                _AltButton(
+                _AltButton(                                                     // = GestureDetector (Construido en el widget _AltButton)
                   up: true,
                   pressed: _altUpPressed,
-                  onPressStart: () => setState(() => _altUpPressed = true),
-                  onPressEnd: () => setState(() => _altUpPressed = false),
+                  onPressStart: () => setState(() => _altUpPressed = true),   // onLongPressStart y onTapDown activan el estado de presión
+                  onPressEnd: () => setState(() => _altUpPressed = false),    // onLongPressEnd y onTapUp desactivan el estado de presión
                 ),
                 const SizedBox(width: 20),
                 _AltButton(
@@ -427,16 +427,19 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 ),
               ],
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 5. Slider (zoom) ----
+
+
+            // ---- 5. Slider (zoom) -----------------------------------------------------------------------------------------------
             _sectionHeader('5. Slider', '— Control de zoom de cámara'),
             _codeNote(
-              'Usado en: FlightScreen, zona lateral izquierda en portrait y horizontal en landscape.\n'
-              'Rango 1.0 - 5.0, 8 divisiones. trackHeight 2, thumbRadius 6, overlayRadius 10.\n',
+              'Rango 1.0 - 5.0, 8 divisiones.\n',
             ),
             const SizedBox(height: 12),
-            Container(
+            Container(                                                                    // Slider con fondo oscuro y borde redondeado
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
                 color: AppColors.surface,
@@ -445,12 +448,12 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
               child: Row(
                 children: [
                   const Icon(
-                    Icons.zoom_out,
+                    Icons.zoom_out,                                                       // Icono de zoom out
                     color: AppColors.textSecondary,
                     size: 16,
                   ),
-                  Expanded(
-                    child: SliderTheme(
+                  Expanded( 
+                    child: SliderTheme(                                               // SliderTheme para personalizar el estilo del Slider
                       data: SliderTheme.of(context).copyWith(
                         trackHeight: 2,
                         thumbShape: const RoundSliderThumbShape(
@@ -464,23 +467,23 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         thumbColor: AppColors.primary,
                         overlayColor: AppColors.primary,
                       ),
-                      child: Slider(
+                      child: Slider(                                                  // Slider  
                         value: _zoom,
-                        min: 1.0,
+                        min: 1.0, // Rango de zoom de 1.0 a 5.0
                         max: 5.0,
-                        divisions: 8,
+                        divisions: 8, // 8 divisiones para pasos de 0.5
                         // onChanged actualiza el estado con el nuevo valor
                         onChanged: (v) => setState(() => _zoom = v),
                       ),
                     ),
                   ),
-                  const Icon(
+                  const Icon(                                                          // Icono de zoom in
                     Icons.zoom_in,
                     color: AppColors.textSecondary,
                     size: 16,
                   ),
                   const SizedBox(width: 8),
-                  Text(
+                  Text(                                                                 // Etiqueta de zoom actual con un decimal
                     '${_zoom.toStringAsFixed(1)}x',
                     style: const TextStyle(
                       color: AppColors.textPrimary,
@@ -491,15 +494,18 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 ],
               ),
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 6. DropdownButton ----
+
+
+            // ---- 6. DropdownButton -----------------------------------------------------------------------------------------------
             _sectionHeader(
               '6. DropdownButton',
               '— Selector de modo de detección YOLO',
             ),
             _codeNote(
-              'Usado en: DetectionDropdown (FlightScreen, superpuesto sobre el vídeo WebRTC).\n'
               'DropdownButtonHideUnderline elimina la línea inferior. dropdownColor = surface.\n'
               'Cada ítem combina un Icon pequeño (13px) con un Text.',
             ),
@@ -511,21 +517,21 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppColors.disabled),
               ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _detectionMode,
+              child: DropdownButtonHideUnderline(                         // Oculta la línea inferior del DropdownButton
+                child: DropdownButton<String>(                            // DropdownButton para seleccionar el modo de detección
+                  value: _detectionMode,  
                   isDense: true,
                   dropdownColor: AppColors.surface,
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 12,
                   ),
-                  icon: const Icon(
+                  icon: const Icon(                                       // Icono de flecha hacia abajo
                     Icons.arrow_drop_down,
                     color: AppColors.textSecondary,
                     size: 16,
                   ),
-                  items: const [
+                  items: const [                      // Primer ítem: Todos
                     DropdownMenuItem(
                       value: 'Todos',
                       child: Row(
@@ -541,7 +547,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         ],
                       ),
                     ),
-                    DropdownMenuItem(
+                    DropdownMenuItem(                   // Segundo ítem: Personas
                       value: 'Personas',
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -556,7 +562,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                         ],
                       ),
                     ),
-                    DropdownMenuItem(
+                    DropdownMenuItem(                         // Tercer ítem: Ninguno
                       value: 'Ninguno',
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
@@ -573,26 +579,29 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                     ),
                   ],
                   onChanged: (v) {
-                    if (v != null) setState(() => _detectionMode = v);
+                    if (v != null) setState(() => _detectionMode = v);    // Actualiza el estado con el nuevo valor seleccionado
                   },
                 ),
               ),
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 7. ModeChip / ConnectionChip ----
+
+
+            // ---- 7. ModeChip / ConnectionChip -------------------------------------------------------------------------------------------------------
             _sectionHeader(
               '7. ModeChip / ConnectionChip',
               '— Selector exclusivo tipo chip',
             ),
             _codeNote(
-              'Usado en: ModeSelector (Classic/Voice/IMU) y DroneConnectionModeSelector (ArduPilot/SITL/Tello).\n'
               'AnimatedContainer con duration 200ms. Seleccionado: borde 2px del color del modo + texto bold.\n'
               'No seleccionado: borde disabled 1px + texto textSecondary.',
             ),
             const SizedBox(height: 10),
-            // Control mode chips
-            const Text(
+
+            const Text(                                       // Etiqueta de sección para modo de control
               'CONTROL MODE',
               style: TextStyle(
                 color: AppColors.textSecondary,
@@ -601,25 +610,27 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
               ),
             ),
             const SizedBox(height: 8),
-            Wrap(
+
+            Wrap(                          
               spacing: 12,
               runSpacing: 8,
               children: [
-                _ModeChip(
+                _ModeChip(                                                // = AnimatedContainer (Construido en el widget _ModeChip) 
+                                                                                  // Primer chip: Classic
                   label: 'Classic',
                   icon: Icons.sports_esports,
                   color: AppColors.primary,
                   selected: _controlMode == 'Classic',
                   onTap: () => setState(() => _controlMode = 'Classic'),
                 ),
-                _ModeChip(
-                  label: 'Voice',
+                _ModeChip(                                                         // Segundo chip: Voice
+                  label: 'Voice', 
                   icon: Icons.mic,
                   color: Colors.teal,
                   selected: _controlMode == 'Voice',
                   onTap: () => setState(() => _controlMode = 'Voice'),
                 ),
-                _ModeChip(
+                _ModeChip(                                                         // Tercer chip: IMU
                   label: 'IMU',
                   icon: Icons.sensors,
                   color: Colors.deepPurple,
@@ -644,20 +655,20 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
               runSpacing: 8,
               children: [
                 _ModeChip(
-                  label: 'ArduPilot',
+                  label: 'ArduPilot',                                             // Primer chip: ArduPilot
                   icon: Icons.developer_board,
                   color: AppColors.primary,
                   selected: _connMode == 'ArduPilot',
                   onTap: () => setState(() => _connMode = 'ArduPilot'),
                 ),
-                _ModeChip(
+                _ModeChip(                                                          // Segundo chip: PX4
                   label: 'SITL',
                   icon: Icons.computer,
                   color: Colors.orange,
                   selected: _connMode == 'SITL',
                   onTap: () => setState(() => _connMode = 'SITL'),
                 ),
-                _ModeChip(
+                _ModeChip(                                                           // Tercer chip: Tello
                   label: 'Tello',
                   icon: Icons.flight,
                   color: Colors.lightBlue,
@@ -666,24 +677,25 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 ),
               ],
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 8. ModalBottomSheet + DraggableScrollableSheet ----
+
+
+            // ---- 8. ModalBottomSheet + DraggableScrollableSheet -------------------------------------------------------------------------------
             _sectionHeader(
               '8. ModalBottomSheet + DraggableScrollableSheet',
               '— Hoja de ayuda arrastrable',
             ),
             _codeNote(
-              'Usado en: showHelpSheet() (SetupScreen), ModeSelectorSheet (TelloFlightScreen).\n'
-              'showModalBottomSheet con isScrollControlled: true permite ocupar hasta el 92% de pantalla.\n'
-              'DraggableScrollableSheet controla el tamaño inicial (0.75), mínimo (0.4) y máximo (0.92).\n'
-              'El contenido interior usa SingleChildScrollView para scroll independiente.',
+              'Arrastrable con showModalBottomSheet + DraggableScrollableSheet.\n'
             ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               height: 44,
-              child: ElevatedButton.icon(
+              child: ElevatedButton.icon(                         // ElevatedButton.icon para mostrar la hoja de ayuda
                 icon: const Icon(Icons.help_outline),
                 label: const Text(
                   'SHOW HELP SHEET',
@@ -700,23 +712,25 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: () => _showHelpSheet(context),
+                onPressed: () => _showHelpSheet(context),                           // LLama al método _showHelpSheet para mostrar la hoja de ayuda
               ),
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 9. AlertDialog ----
+
+
+            // ---- 9. AlertDialog ------------------------------------------------------------------------------------------------------------
             _sectionHeader('9. AlertDialog', '— Diálogo de confirmación'),
             _codeNote(
-              'Usado en: confirmación de borrar waypoints (FlightPlanScreen) y error de conexión (SetupScreen).\n'
-              'backgroundColor = surface para mantener la paleta oscura.\n'
-              'Acciones: TextButton Cancel (textSecondary) + TextButton destructivo (danger o primary).',
+              'Boton ElevatedButton.icon que muestra un AlertDialog con acciones de confirmación.\n'
             ),
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               height: 44,
-              child: ElevatedButton.icon(
+              child: ElevatedButton.icon(                             // ElevatedButton.icon para mostrar el diálogo de alerta
                 icon: const Icon(Icons.delete_sweep),
                 label: const Text(
                   'SHOW ALERT DIALOG',
@@ -733,26 +747,27 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                     borderRadius: BorderRadius.circular(12),
                   ),
                 ),
-                onPressed: () => _showAlertDialog(context),
+                onPressed: () => _showAlertDialog(context),                   // LLama al método _showAlertDialog para mostrar el diálogo de alerta
               ),
             ),
+
+
             const SizedBox(height: 24),
 
-            // ---- 10. ReorderableListView ----
+
+
+            // ---- 10. ReorderableListView ----------------------------------------------------------------------------------------------
             _sectionHeader(
               '10. ReorderableListView',
               '— Lista reordenable con drag handle',
             ),
             _codeNote(
-              'Usado en: lista de waypoints (FlightPlanScreen) y registros de vuelo (FlightLogScreen).\n'
-              'ReorderableListView.builder con buildDefaultDragHandles: false.\n'
-              'Cada ítem usa ReorderableDragStartListener como handle manual con su índice.\n'
-              'onReorder: removeAt(oldIndex) + insert(newIndex, item).',
+              'Lista reordenable con drag handle manual y botón para borrar.\n'
             ),
             const SizedBox(height: 12),
             SizedBox(
               height: 220,
-              child: _ReorderableDemo(items: _reorderItems),
+              child: _ReorderableDemo(items: _reorderItems),        // = ReorderableListView.builder (Construido en el widget _ReorderableDemo)
             ),
             const SizedBox(height: 32),
           ],
@@ -761,22 +776,24 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
     );
   }
 
+
+
   // ---------- Métodos para widgets 8 y 9 ----------
 
-  void _showHelpSheet(BuildContext context) {
+  void _showHelpSheet(BuildContext context) {                 // Muestra la hoja de ayuda con showModalBottomSheet + DraggableScrollableSheet
     showModalBottomSheet(
       context: context,
-      isScrollControlled: true,
+      isScrollControlled: true,                   
       backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (sheetCtx) => DraggableScrollableSheet(
+      builder: (sheetCtx) => DraggableScrollableSheet(                        // Builder de DraggableScrollableSheet para permitir arrastrar la hoja
         initialChildSize: 0.75,
         minChildSize: 0.4,
         maxChildSize: 0.92,
         expand: false,
-        builder: (_, scrollController) => SingleChildScrollView(
+        builder: (_, scrollController) => SingleChildScrollView(        // SingleChildScrollView para permitir desplazamiento dentro de la hoja
           controller: scrollController,
           padding: const EdgeInsets.fromLTRB(20, 12, 20, 32),
           child: Column(
@@ -795,7 +812,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
               const SizedBox(height: 16),
               const Row(
                 children: [
-                  Icon(Icons.flight, color: AppColors.primary, size: 20),
+                  Icon(Icons.flight, color: AppColors.primary, size: 20),       // Título de la hoja de ayuda 
                   SizedBox(width: 8),
                   Text(
                     'EZDrone — How to fly',
@@ -808,7 +825,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 ],
               ),
               const SizedBox(height: 20),
-              const _HelpSection(
+              const _HelpSection(                               // Sección de ayuda: Classic Joystick. (Widget auxiliar explicado más abajo)
                 icon: Icons.sports_esports,
                 title: 'Classic Joystick',
                 color: AppColors.primary,
@@ -827,11 +844,11 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   ),
                   _HelpItem(
                     Icons.videocam,
-                    'Camera on: 📷 capture photo · ⏺ record video · 🔄 switch camera',
+                    'Camera on:  capture photo ·  record video ·  switch camera',
                   ),
                   _HelpItem(
                     Icons.zoom_in,
-                    'Zoom bar (×1–×5) — available in camera view only',
+                    'Zoom bar (x1 - x5) — available in camera view only',
                   ),
                   _HelpItem(
                     Icons.search,
@@ -844,9 +861,9 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                 ],
               ),
               const SizedBox(height: 16),
-              _HelpSection(
+              _HelpSection(                                                                     // Sección de ayuda: IMU 
                 icon: Icons.sensors,
-                title: 'IMU / Gyroscope',
+                title: 'IMU',
                 color: Colors.deepPurple,
                 items: const [
                   _HelpItem(
@@ -867,22 +884,22 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   ),
                   _HelpItem(
                     Icons.warning_amber,
-                    'Dead zone ±5–15° (fwd) / ±10° (lateral) ignored',
+                    'Dead zone ±5-15° (fwd) / ±10° (lateral) ignored',
                   ),
                   _HelpItem(Icons.info_outline, 'Not available for Tello'),
                 ],
               ),
               const SizedBox(height: 16),
-              _HelpSection(
+              _HelpSection(                                                               // Sección de ayuda: Voice Control
                 icon: Icons.mic,
                 title: 'Voice Control (es-ES)',
                 color: Colors.teal,
                 items: const [
                   _HelpItem(
                     Icons.touch_app,
-                    'First tap 🎤 — grants microphone permission in the browser',
+                    'First tap mic — grants microphone permission in the browser',
                   ),
-                  _HelpItem(Icons.mic, 'Hold 🎤 → speak → release → executes'),
+                  _HelpItem(Icons.mic, 'Hold mic - speak - release - executes'),
                   _HelpItem(
                     Icons.record_voice_over,
                     'armar · despegar · aterrizar · para / stop',
@@ -898,126 +915,10 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                   _HelpItem(Icons.info_outline, 'Not available for Tello'),
                 ],
               ),
-              const SizedBox(height: 16),
-              const _HelpSection(
-                icon: Icons.flight,
-                title: 'Tello (DJI)',
-                color: Colors.lightBlue,
-                items: [
-                  _HelpItem(
-                    Icons.wifi,
-                    'Connect your device to the Tello Wi-Fi before launching the app',
-                  ),
-                  _HelpItem(
-                    Icons.sports_esports,
-                    'Dual joystick — left: Throttle/Yaw · right: Pitch/Roll',
-                  ),
-                  _HelpItem(
-                    Icons.flight_takeoff,
-                    'TAKEOFF — takes off automatically (~50 cm), no ARM step required',
-                  ),
-                  _HelpItem(
-                    Icons.flight_land,
-                    'LAND — smooth descent and motor stop',
-                  ),
-                  _HelpItem(
-                    Icons.videocam,
-                    'Camera on: 📷 capture photo · ⏺ record video',
-                  ),
-                  _HelpItem(
-                    Icons.tune,
-                    'MODES — opens the Flip, Follow and Orbit panel',
-                  ),
-                  _HelpItem(
-                    Icons.flip_camera_android,
-                    'Flip: tap a direction arrow while flying to execute the flip',
-                  ),
-                  _HelpItem(
-                    Icons.directions_run,
-                    'Follow: activates person-tracking mode (tap STOP to deactivate)',
-                  ),
-                  _HelpItem(
-                    Icons.rotate_right,
-                    'Orbit: orbits around a person — adjust radius with slider (30–200 cm)',
-                  ),
-                  _HelpItem(
-                    Icons.warning_amber,
-                    'Voice and IMU modes are not available for Tello',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const _HelpSection(
-                icon: Icons.edit_location_alt_outlined,
-                title: 'Flight Planner',
-                color: AppColors.primary,
-                items: [
-                  _HelpItem(
-                    Icons.map,
-                    'Tap the map to add waypoints — numbered in insertion order',
-                  ),
-                  _HelpItem(
-                    Icons.touch_app,
-                    'Tap a waypoint on the map or list to edit its altitude and action',
-                  ),
-                  _HelpItem(
-                    Icons.drag_handle,
-                    'Drag the ≡ handle in the list to reorder waypoints',
-                  ),
-                  _HelpItem(
-                    Icons.bolt,
-                    'Actions per waypoint: None · Hover · Photo · Record · RTL · Land',
-                  ),
-                  _HelpItem(
-                    Icons.save_outlined,
-                    'Save plan locally with 💾 — persists across sessions',
-                  ),
-                  _HelpItem(
-                    Icons.upload,
-                    'UPLOAD — sends the mission to the drone (active connection required)',
-                  ),
-                  _HelpItem(
-                    Icons.play_arrow,
-                    'START — begins autonomous mission once uploaded to the drone',
-                  ),
-                  _HelpItem(
-                    Icons.download_outlined,
-                    'Download plan as a .waypoints file compatible with Mission Planner',
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              const _HelpSection(
-                icon: Icons.history,
-                title: 'Flight Log',
-                color: AppColors.primary,
-                items: [
-                  _HelpItem(
-                    Icons.auto_graph,
-                    'Every completed or interrupted flight is recorded automatically',
-                  ),
-                  _HelpItem(
-                    Icons.map_outlined,
-                    'Tap a session to view its trail on an interactive map with a playback slider',
-                  ),
-                  _HelpItem(
-                    Icons.speed,
-                    'Stats: duration · distance · max altitude · altitude gain · max speed · min battery',
-                  ),
-                  _HelpItem(
-                    Icons.download,
-                    'Download telemetry data as a CSV file',
-                  ),
-                  _HelpItem(
-                    Icons.delete_sweep,
-                    'Delete sessions individually or clear all at once',
-                  ),
-                ],
-              ),
               const SizedBox(height: 28),
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton(
+                child: ElevatedButton(                                          // ElevatedButton para cerrar la hoja de ayuda
                   onPressed: () => Navigator.pop(sheetCtx),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: AppColors.primary,
@@ -1040,10 +941,10 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
     );
   }
 
-  void _showAlertDialog(BuildContext context) {
+  void _showAlertDialog(BuildContext context) {                   // Muestra un AlertDialog de confirmación con showDialog
     showDialog(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (_) => AlertDialog(            // AlertDialog con título, contenido y acciones
         backgroundColor: AppColors.surface,
         title: const Text(
           'Clear all waypoints?',
@@ -1055,14 +956,14 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context),                // Al presionar "Cancel", se cierra el diálogo sin realizar ninguna acción 
             child: const Text(
               'Cancel',
               style: TextStyle(color: AppColors.textSecondary),
             ),
           ),
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context),      //Al pulsar se cierra el diálogo y se ejecuta la acción de borrado (en este caso, solo un print)
             child: const Text(
               'Clear',
               style: TextStyle(
@@ -1076,8 +977,11 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
     );
   }
 
+
+// WIDGETS AUXILIARES REUTILIZABLES
+
   // Cabecera de sección
-  Widget _sectionHeader(String title, String subtitle) {
+  Widget _sectionHeader(String title, String subtitle) {        // Cabecera de sección con título y subtítulo (widget auxiliar)
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1102,7 +1006,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
   }
 
   // Nota de código / descripción técnica
-  Widget _codeNote(String text) {
+  Widget _codeNote(String text) {                               // Nota de código / descripción técnica (widget auxiliar)
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -1123,12 +1027,10 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
   }
 }
 
-// ============================================================
-// WIDGETS REUTILIZABLES (réplicas exactas de EZDrone)
-// ============================================================
 
 // ---- Widget 2: HudButton (GestureDetector + AnimatedContainer) ----
-class _HudButton extends StatelessWidget {
+class _HudButton extends StatelessWidget {      
+  // Valores requeridos para el botón: icono, etiqueta, color, estado habilitado, estado activo y callback onTap                                        
   final IconData icon;
   final String label;
   final Color color;
@@ -1137,6 +1039,7 @@ class _HudButton extends StatelessWidget {
   final VoidCallback onTap;
 
   const _HudButton({
+    // Constructor con parámetros requeridos
     required this.icon,
     required this.label,
     required this.color,
@@ -1148,7 +1051,7 @@ class _HudButton extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: enabled ? onTap : null,
+      onTap: enabled ? onTap : null,  // Si el botón está habilitado, se ejecuta el callback onTap; si no, no hace nada
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1168,7 +1071,7 @@ class _HudButton extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, color: enabled ? color : AppColors.disabled, size: 20),
+            Icon(icon, color: enabled ? color : AppColors.disabled, size: 20),  
             const SizedBox(height: 2),
             Text(
               label,
@@ -1188,6 +1091,7 @@ class _HudButton extends StatelessWidget {
 
 // ---- Widget 3: Botón icono compacto (GestureDetector + Container) ----
 class _IconCompactButton extends StatelessWidget {
+  // variables: icono, estado activo, color activo y callback onTap
   final IconData icon;
   final bool active;
   final Color activeColor;
@@ -1217,8 +1121,9 @@ class _IconCompactButton extends StatelessWidget {
   }
 }
 
-// ---- Widget 4: Botón de altitud (presión continua) ----
+// ---- Widget 4: Botón de presión continua ----
 class _AltButton extends StatelessWidget {
+  // variables: dirección (up/down), estado de presión, callbacks onPressStart y onPressEnd
   final bool up;
   final bool pressed;
   final VoidCallback onPressStart;
@@ -1250,7 +1155,7 @@ class _AltButton extends StatelessWidget {
           border: Border.all(color: pressed ? borderColor : AppColors.disabled),
         ),
         child: Icon(
-          up ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+          up ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down, // Icono de flecha hacia arriba o hacia abajo según la dirección
           color: pressed ? borderColor : AppColors.disabled,
           size: 28,
         ),
@@ -1259,8 +1164,9 @@ class _AltButton extends StatelessWidget {
   }
 }
 
-// ---- Widget 7: ModeChip / ConnectionChip ----
+// ---- Widget 7: ModeChip  ----
 class _ModeChip extends StatelessWidget {
+  // variables: etiqueta, icono, color, estado seleccionado y callback onTap
   final String label;
   final IconData icon;
   final Color color;
@@ -1316,12 +1222,11 @@ class _ModeChip extends StatelessWidget {
   }
 }
 
-// ============================================================
-// WIDGETS AUXILIARES — Sección 8 (HelpSheet) y 10 (ReorderableList)
-// ============================================================
 
-// ---- _HelpSection y _HelpItem (widget 8) ----
+
+// ---- _HelpSection ---- 
 class _HelpSection extends StatelessWidget {
+  // variables: icono, título, color y lista de items de ayuda
   final IconData icon;
   final String title;
   final Color color;
@@ -1344,14 +1249,14 @@ class _HelpSection extends StatelessWidget {
         border: Border.all(color: color.withValues(alpha: 0.5), width: 1.5),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        crossAxisAlignment: CrossAxisAlignment.start, // Alinea los elementos hijos al inicio del eje horizontal
         children: [
           Row(
             children: [
               Icon(icon, color: color, size: 18),
               const SizedBox(width: 8),
               Text(
-                title.toUpperCase(),
+                title.toUpperCase(),  
                 style: TextStyle(
                   color: color,
                   fontSize: 12,
@@ -1362,14 +1267,14 @@ class _HelpSection extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 10),
-          ...items,
+          ...items, // Despliega la lista de items de ayuda (cada item es un widget _HelpItem)
         ],
       ),
     );
   }
 }
 
-class _HelpItem extends StatelessWidget {
+class _HelpItem extends StatelessWidget { // item de ayuda individual con icono y texto
   final IconData icon;
   final String text;
 
@@ -1399,8 +1304,9 @@ class _HelpItem extends StatelessWidget {
   }
 }
 
-// ---- _ReorderableDemo (widget 10) ----
+// ---- Waypoints reorderables  ----
 class _ReorderableDemo extends StatefulWidget {
+  // variables: lista de items
   final List<String> items;
   const _ReorderableDemo({required this.items});
 
@@ -1422,16 +1328,16 @@ class _ReorderableDemoState extends State<_ReorderableDemo> {
     return ReorderableListView.builder(
       padding: const EdgeInsets.only(top: 4, bottom: 4),
       itemCount: _items.length,
-      buildDefaultDragHandles: false,
+      buildDefaultDragHandles: false,   // Desactiva los drag handles por defecto para usar ReorderableDragStartListener
       onReorder: (oldIndex, newIndex) {
-        setState(() {
+        setState(() {     // Actualiza la lista de items al reordenar
           if (newIndex > oldIndex) newIndex--;
           final item = _items.removeAt(oldIndex);
           _items.insert(newIndex, item);
         });
-      },
-      itemBuilder: (ctx, i) => Container(
-        key: ValueKey(_items[i]),
+      },  
+      itemBuilder: (ctx, i) => Container(     // Cada item de la lista es un Container con estilo y contenido
+        key: ValueKey(_items[i]), // Clave única para cada item basada en su valor
         margin: const EdgeInsets.symmetric(vertical: 3),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         decoration: BoxDecoration(
@@ -1441,7 +1347,7 @@ class _ReorderableDemoState extends State<_ReorderableDemo> {
         ),
         child: Row(
           children: [
-            ReorderableDragStartListener(
+            ReorderableDragStartListener( // Empieza el listener de arrastre para reordenar el item
               index: i,
               child: const Padding(
                 padding: EdgeInsets.only(right: 8),
@@ -1452,7 +1358,7 @@ class _ReorderableDemoState extends State<_ReorderableDemo> {
                 ),
               ),
             ),
-            Container(
+            Container(      // Círculo con número de waypoint
               width: 24,
               height: 24,
               decoration: const BoxDecoration(
@@ -1471,7 +1377,7 @@ class _ReorderableDemoState extends State<_ReorderableDemo> {
               ),
             ),
             const SizedBox(width: 10),
-            Expanded(
+            Expanded(             // Texto del waypoint
               child: Text(
                 _items[i],
                 style: const TextStyle(
@@ -1482,7 +1388,7 @@ class _ReorderableDemoState extends State<_ReorderableDemo> {
               ),
             ),
             GestureDetector(
-              onTap: () => setState(() => _items.removeAt(i)),
+              onTap: () => setState(() => _items.removeAt(i)),  // Al presionar el icono de borrar, se elimina el item de la lista
               child: const Padding(
                 padding: EdgeInsets.all(4),
                 child: Icon(

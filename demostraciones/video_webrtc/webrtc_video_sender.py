@@ -14,20 +14,20 @@ import torch
 # NUEVAS FEATURES respecto a la versión básica:
 #
 # 1. Modo de detección (detection_mode):
-#    - 'all'    → detecta y dibuja todos los objetos (comportamiento original)
-#    - 'person' → solo detecta y dibuja personas (class 'person' en COCO)
-#    - 'none'   → YOLO no corre, no se dibujan bboxes
+#    - 'all'    - detecta y dibuja todos los objetos (comportamiento original)
+#    - 'person' - solo detecta y dibuja personas (class 'person' en COCO)
+#    - 'none'   - YOLO no corre, no se dibujan bboxes
 #    Flutter envía: {"type": "detection_mode", "mode": "all|person|none"}
 #
 # 2. Captura de frame (save_next_frame):
 #    Flutter envía: {"type": "capture"}
-#    → Python guarda el frame actual (con anotaciones) como PNG
-#    → Responde con: {"type":"ack","action":"capture_saved","filename":"..."}
+#    - Python guarda el frame actual (con anotaciones) como PNG
+#    - Responde con: {"type":"ack","action":"capture_saved","filename":"..."}
 #
 # 3. Grabación de vídeo:
 #    Flutter envía: {"type": "record_start"} / {"type": "record_stop"}
-#    → Python abre/cierra un VideoWriter de OpenCV (mp4)
-#    → Responde con acks de record_started / record_stopped
+#    - Python abre/cierra un VideoWriter de OpenCV (mp4)
+#    - Responde con acks de record_started / record_stopped
 #
 # CANAL DE CONTROL:
 #    El mismo WebSocket del handshake permanece abierto durante toda
@@ -35,11 +35,11 @@ import torch
 #    se distinguen por el campo "type".
 # ============================================================
 
-model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)    # Carga el modelo YOLOv5s preentrenado
 model.eval()
 
 
-class CustomVideoStreamTrack(VideoStreamTrack):
+class CustomVideoStreamTrack(VideoStreamTrack): 
     def __init__(self, camera_id):
         super().__init__()
         print("Preparando la cámara ....")
@@ -127,7 +127,7 @@ class CustomVideoStreamTrack(VideoStreamTrack):
         return video_frame
 
     def start_recording(self):
-        """Abre un VideoWriter de OpenCV para grabar en MP4."""
+        #Abre un VideoWriter de OpenCV para grabar en MP4
         h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.recording_filename = f"video_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
@@ -135,21 +135,21 @@ class CustomVideoStreamTrack(VideoStreamTrack):
         self.video_writer = cv2.VideoWriter(
             self.recording_filename, fourcc, 30.0, (w, h))
         self.is_recording = True
-        print(f"🎥 Grabación iniciada: {self.recording_filename}")
+        print(f"Grabación iniciada: {self.recording_filename}")
 
     def stop_recording(self):
-        """Cierra el VideoWriter y devuelve el nombre del archivo."""
+        #Cierra el VideoWriter y devuelve el nombre del archivo
         self.is_recording = False
         if self.video_writer:
             self.video_writer.release()
             self.video_writer = None
         filename = self.recording_filename
         self.recording_filename = None
-        print(f"🎥 Grabación detenida: {filename}")
+        print(f"Grabación detenida: {filename}")
         return filename
 
 
-async def handle_client(websocket):
+async def handle_client(websocket): 
     global video_sender
     print("Se ha conectado el receptor")
     pc = RTCPeerConnection()
@@ -185,19 +185,19 @@ async def handle_client(websocket):
                 desc = RTCSessionDescription(
                     sdp=data["sdp"], type=data["sdp_type"])
                 await pc.setRemoteDescription(desc)
-                print("✅ Stream WebRTC activo")
+                print("Stream WebRTC activo")
 
             # ── CAMBIO DE MODO DE DETECCIÓN ───────────────────────────
             elif data.get("type") == "detection_mode":
                 mode = data.get("mode", "all")
                 video_sender.detection_mode = mode
                 video_sender.detecciones = []  # limpiar bboxes anteriores
-                print(f"🎯 Modo de detección: {mode}")
+                print(f"Modo de detección: {mode}")
 
             # ── CAPTURA ───────────────────────────────────────────────
             elif data.get("type") == "capture":
                 video_sender.save_next_frame = True
-                print("📸 Captura solicitada")
+                print("Captura solicitada")
 
             # ── INICIAR GRABACIÓN ─────────────────────────────────────
             elif data.get("type") == "record_start":
@@ -220,7 +220,7 @@ async def handle_client(websocket):
                     })
 
     except websockets.ConnectionClosed:
-        print("❌ Conexión cerrada.")
+        print(" Conexión cerrada.")
     finally:
         # Asegurarse de cerrar la grabación si la conexión se interrumpe
         if video_sender.is_recording:
@@ -233,7 +233,7 @@ async def main():
     HOST = '0.0.0.0'
     PORT = 9999
     video_sender = CustomVideoStreamTrack(0)
-    print(f"🖥️ Esperando conexión en ws://{HOST}:{PORT}")
+    print(f" Esperando conexión en ws://{HOST}:{PORT}")
     async with websockets.serve(handle_client, HOST, PORT):
         await asyncio.Future()
 

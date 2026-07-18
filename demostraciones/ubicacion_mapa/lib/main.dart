@@ -12,17 +12,17 @@ import 'package:geolocator/geolocator.dart';
 // tiempo real sobre un mapa de OpenStreetMap.
 //
 // LIBRERÍAS:
-//   - geolocator: ^13.0.2  - obtiene la posición GPS
-//   - flutter_map: ^7.0.2  - renderiza el mapa (sin API key)
-//   - latlong2: ^0.9.1     - manejo de coordenadas lat/lng
+//   - geolocator: ^14.0.2 - obtiene la posición GPS
+//   - flutter_map: ^8.2.2  - renderiza el mapa (sin API key)
+//   - latlong2: ^0.9.1    - manejo de coordenadas lat/lng
 //
 // PERMISOS NECESARIOS:
-//   Android → android/app/src/main/AndroidManifest.xml
+//   Android - android/app/src/main/AndroidManifest.xml
 //     Añadir dentro de <manifest> y fuera de <application>:
 //     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
 //     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 //
-//   iOS → ios/Runner/Info.plist
+//   iOS - ios/Runner/Info.plist
 //     Añadir dentro de <dict> al final antes de </dict>:
 //     <key>NSLocationWhenInUseUsageDescription</key>
 //     <string>Necesitamos tu ubicación para mostrarte en el mapa</string>
@@ -66,6 +66,8 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
+
+  // variables de estado
   LatLng? _currentPosition; // posición actual (null hasta tener GPS)
   double _accuracy = 0;
   final MapController _mapController = MapController(); // controlador del mapa
@@ -77,6 +79,7 @@ class _MapScreenState extends State<MapScreen> {
     _startTracking(); // arranca el GPS nada más crear la pantalla
   }
 
+  // abre un stream GPS que emite posición cada 1 metro
   Future<void> _startTracking() async {
     LocationPermission permission =
         await Geolocator.requestPermission(); // pide permiso de ubi al usuario
@@ -113,6 +116,8 @@ class _MapScreenState extends State<MapScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Ubicación en tiempo real')),
+
+      // si no hay posición aún, mostrar un spinner de espera
       body: _currentPosition == null
           ? const Center(child: CircularProgressIndicator()) // mientras espera el primer GPS
           : Stack(
@@ -127,8 +132,9 @@ class _MapScreenState extends State<MapScreen> {
                     TileLayer(
                       urlTemplate:
                           'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                      userAgentPackageName: 'com.example.app',
                     ),
-                    MarkerLayer(
+                    MarkerLayer( 
                       markers: [
                         Marker( // marcador de ubicación (icono modificable)
                           point: _currentPosition!,

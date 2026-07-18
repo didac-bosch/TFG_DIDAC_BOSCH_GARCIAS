@@ -1,25 +1,24 @@
 // ===========================================================================
-// FLIGHT LOG SCREEN 
+// FLIGHT LOG SCREEN
 // ===========================================================================
-// Pantalla de historial de vuelos. Muestra la lista de sesiones grabadas
-// y permite explorar el detalle de cada una: mapa de trayectoria, slider
-// temporal y descarga del log en CSV.
+// Pantalla del historial de vuelos. Enseña la lista de sesiones grabadas y
+// deja entrar al detalle de cada una: mapa con la trayectoria, un slider para
+// recorrer el vuelo y la descarga del log en CSV.
 //
-// Este fichero contiene únicamente la capa de presentación (UI). Los datos
-// que muestra proceden de sample_flight_data.dart, que expone la lista
-// sampleSessions. En EZDrone real los datos equivalentes se leen del
-// Provider (provider.flightHistory) y se acumulan en tiempo real durante
-// el vuelo.
+// Aquí solo vive la parte visual (UI). Los datos salen de
+// sample_flight_data.dart, que expone la lista sampleSessions. En el EZDrone
+// real esos mismos datos se leerían del Provider (provider.flightHistory) y se
+// irían llenando en directo mientras se vuela.
 //
-// Estructura de este fichero:
-//   • AppColors              — paleta de colores idéntica a EZDrone
-//   • FlightLogScreen        — lista principal de sesiones
-//   • _SessionCard           — tarjeta de resumen de una sesión
-//   • _MetricTile            — tile de métrica (icono + valor + etiqueta)
-//   • _FlightDetailSheet     — bottom sheet con mapa, slider y estadísticas
-//   • _StatCard              — tarjeta de estadística en el detail sheet
-//   • Helpers                — _modeColor, _formatDuration, _formatDistance,
-//                              _formatDate
+// QUÉ HAY EN ESTE FICHERO:
+//   AppColors           - paleta de colores, la misma que EZDrone
+//   FlightLogScreen     - la lista principal de sesiones
+//   _SessionCard        - la tarjeta resumen de una sesión
+//   _MetricTile         - una métrica suelta (icono + valor + etiqueta)
+//   _FlightDetailSheet  - el panel de detalle (mapa, slider y estadísticas)
+//   _StatCard           - una tarjeta de estadística dentro del detalle
+//   Helpers             - _modeColor, _formatDuration, _formatDistance,
+//                         _formatDate
 // ===========================================================================
 
 import 'dart:js_interop';
@@ -31,7 +30,9 @@ import 'package:latlong2/latlong.dart';
 import 'package:web/web.dart' as web;
 import 'sample_flight_data.dart';
 
-// -----COLORES -------------------------------
+// -------- COLORES ------------------------------
+
+// Paleta de la app (mismos tonos oscuros y morado que usa EZDrone)
 class AppColors {
   static const background = Color(0xFF0D0D0F);
   static const surface = Color(0xFF1A1A1F);
@@ -44,14 +45,16 @@ class AppColors {
 }
 
 // ------ PANTALLA PRINCIPAL --------------------------
-/// Muestra la lista de sesiones de vuelo. Cada sesión se muestra en una tarjeta con sus métricas principales, y al pulsar se abre un bottom sheet con el detalle completo del vuelo.
 
+// Lista las sesiones de vuelo. Cada una aparece en una tarjeta con sus métricas
+// principales; al tocarla se abre el panel con el detalle completo del vuelo.
 class FlightLogScreen extends StatelessWidget {
   const FlightLogScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // En EZDrone: final sessions = context.watch<DronProvider>().flightHistory;
+    // En EZDrone esto sería: context.watch<DronProvider>().flightHistory;
+    // Aquí, al ser demo, se tira de la lista de ejemplo fija.
     final sessions = sampleSessions;
 
     final screenH = MediaQuery.of(context).size.height;
@@ -75,7 +78,7 @@ class FlightLogScreen extends StatelessWidget {
         centerTitle: true,
         toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
         actions: [
-          // Badge con número de sesiones
+          // Contador con el número de vuelos guardados
           Padding(
             padding: const EdgeInsets.only(right: 16),
             child: Center(
@@ -102,7 +105,7 @@ class FlightLogScreen extends StatelessWidget {
         ],
       ),
 
-      // Lista de sesiones
+      // Lista scrollable, una tarjeta por sesión
       body: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: sessions.length,
@@ -113,8 +116,9 @@ class FlightLogScreen extends StatelessWidget {
 }
 
 // ------ TARJETA DE SESIÓN --------------------------
-// Muestra un resumen de la sesión con sus métricas principales. Al pulsar, abre el bottom sheet con el detalle completo del vuelo.
 
+// Resumen de un vuelo con sus métricas principales. Al tocarla abre el panel
+// de detalle con todo el vuelo.
 class _SessionCard extends StatelessWidget {
   final FlightSession session;
   const _SessionCard({required this.session});
@@ -141,7 +145,7 @@ class _SessionCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ------ Cabecera — fecha + modo de control + SITL + estado -------
+              // ------ Cabecera: fecha + chip de modo + chip SITL -------
               Row(
                 children: [
                   Expanded(
@@ -156,7 +160,7 @@ class _SessionCard extends StatelessWidget {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Chip modo de control
+                  // Chip con el modo de control (CLASSIC / VOICE / IMU)
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 8,
@@ -177,7 +181,7 @@ class _SessionCard extends StatelessWidget {
                       ),
                     ),
                   ),
-                  // Chip SITL
+                  // Chip SITL, solo si el vuelo fue en el simulador
                   if (session.isSitl) ...[
                     const SizedBox(width: 4),
                     Container(
@@ -204,7 +208,7 @@ class _SessionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
-              // Estado completado / interrumpido
+              // Línea de estado: completado (verde) o interrumpido (ámbar)
               Row(
                 children: [
                   Icon(
@@ -229,7 +233,7 @@ class _SessionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
-              // ------ Métricas — duration + distancia + altitud ------ 
+              // ------ Fila de métricas: duración, distancia, alturas y velocidad ------
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
@@ -259,7 +263,7 @@ class _SessionCard extends StatelessWidget {
     );
   }
 
-  // Helper para abrir el bottom sheet con el detalle completo del vuelo.
+  // Abre el panel inferior (bottom sheet) con el detalle completo del vuelo
   void _openDetail(BuildContext context) {
     showModalBottomSheet(
       context: context,
@@ -275,7 +279,8 @@ class _SessionCard extends StatelessWidget {
 
 // ------ TILE DE MÉTRICA --------------------------
 
-// Icono + valor + etiqueta para mostrar una métrica concreta de la sesión. Se usa tanto en la tarjeta de resumen como en el detail sheet.
+// Bloque pequeño (icono + valor + etiqueta) para una métrica suelta. Se usa en
+// la fila de métricas de la tarjeta de resumen.
 class _MetricTile extends StatelessWidget {
   final IconData icon;
   final String value;
@@ -307,10 +312,11 @@ class _MetricTile extends StatelessWidget {
   }
 }
 
-// ----- DETAIL SHEET ---------------------------
+// ----- PANEL DE DETALLE ---------------------------
 
-// Bottom sheet que muestra el detalle completo de la sesión: mapa con la trayectoria, slider temporal para explorar el vuelo, 
-//estadísticas detalladas y botón de descarga del CSV. Se abre al pulsar una tarjeta de sesión en la lista principal.
+// Panel inferior con todo el detalle del vuelo: mapa con la trayectoria, slider
+// para recorrer el vuelo punto a punto, tarjetas de estadísticas y el botón de
+// descarga del CSV. Se abre al tocar una tarjeta de la lista principal.
 class _FlightDetailSheet extends StatefulWidget {
   final FlightSession session;
   const _FlightDetailSheet({required this.session});
@@ -321,23 +327,24 @@ class _FlightDetailSheet extends StatefulWidget {
 
 class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   final MapController _mapController = MapController();
-  int _playIndex = 0; // índice del punto visible actualmente en el slider
+  int _playIndex = 0; // hasta qué punto de la trayectoria llega el slider
 
+  // Al abrir el panel: pone el slider al final (vuelo entero) y encuadra el mapa
   @override
   void initState() {
     super.initState();
-    // El slider arranca al final para mostrar el vuelo completo
     _playIndex = (widget.session.trail.length - 1).clamp(0, 999999);
     WidgetsBinding.instance.addPostFrameCallback((_) => _fitTrail());
   }
 
+  // Libera el controlador del mapa al cerrar el panel
   @override
   void dispose() {
     _mapController.dispose();
     super.dispose();
   }
 
-  // Encuadra la cámara del mapa para mostrar toda la trayectoria.
+  // Mueve y hace zoom en el mapa para que quepa toda la trayectoria
   void _fitTrail() {
     final trail = widget.session.trail;
     if (trail.isEmpty) return;
@@ -361,8 +368,9 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     } catch (_) {}
   }
 
-  // Texto de telemetría para el punto actual del slider.
-  // Interpola el índice del trail al índice del log.
+  // Línea de telemetría del punto donde está el slider.
+  // El trail y el log tienen tamaños distintos, así que se pasa el índice de
+  // uno al otro por regla de tres.
   String _snapshotInfo() {
     final log = widget.session.log;
     final trail = widget.session.trail;
@@ -376,7 +384,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
         'BAT ${s.bat.toStringAsFixed(0)} %';
   }
 
-  // Ángulo de orientación del dron en el punto actual del slider (radianes).
+  // Hacia dónde apunta el dron en el punto del slider (rumbo, en radianes).
+  // Se calcula con el bearing entre el punto anterior y el actual.
   double _droneHeading() {
     final trail = widget.session.trail;
     if (trail.length < 2 || _playIndex == 0) return 0;
@@ -390,8 +399,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     return atan2(y, x);
   }
 
-  // Construye el contenido del CSV.
-  // Las columnas son idénticas a las que genera EZDrone al descargar un vuelo.
+  // Arma el texto del CSV, una fila por snapshot.
+  // Las columnas son las mismas que saca EZDrone al descargar un vuelo.
   String _buildCSV() {
     final sb = StringBuffer();
     sb.writeln('timestamp,lat,lon,alt_m,speed_ms,bat_pct,heading_deg');
@@ -409,8 +418,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     return sb.toString();
   }
 
-  // Dispara la descarga del CSV en el navegador mediante un <a> temporal.
-  // En EZDrone real este helper se llama downloadCSVEZ() y está en fullscreen.dart.
+  // Lanza la descarga del CSV en el navegador con un <a> temporal.
+  // En EZDrone este helper se llama downloadCSVEZ() y vive en fullscreen.dart.
   void _downloadCSV() {
     final csv = _buildCSV();
     final dateStr = widget.session.startTime
@@ -422,13 +431,13 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     if (kIsWeb) {
       _descargarWeb(csv, 'text/csv;charset=utf-8', filename);
     } else {
-      // Sin descarga nativa en esta demo: mostramos el CSV para copiarlo.
+      // Fuera de Web no hay descarga nativa aquí: se enseña el CSV para copiarlo
       _showCSVDialog(csv);
     }
   }
 
-  // Descarga real en navegador: Blob → objectURL → <a download>.click().
-  // Equivale a downloadCSVEZ() de EZDrone (dart:js_interop + package:web).
+  // Descarga de verdad en el navegador: Blob -> objectURL -> click en <a download>
+  // Es lo mismo que hace downloadCSVEZ() de EZDrone (dart:js_interop + package:web)
   void _descargarWeb(String contenido, String mime, String filename) {
     final blob = web.Blob(
       [contenido.toJS].toJS,
@@ -442,8 +451,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     web.URL.revokeObjectURL(url);
   }
 
-  // Fallback: muestra el CSV en un diálogo con texto seleccionable.
-  // Útil cuando el entorno no permite disparar descargas programáticamente.
+  // Plan B: enseña el CSV en un diálogo con el texto seleccionable.
+  // Sirve cuando el entorno no deja lanzar descargas por código.
   void _showCSVDialog(String csv) {
     showDialog(
       context: context,
@@ -476,6 +485,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     );
   }
 
+  // Crea un marcador circular de color con un icono dentro (despegue/aterrizaje)
   Marker _buildMarker({
     required LatLng point,
     required IconData icon,
@@ -525,7 +535,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ----- Drag handle 
+            // ----- Asa para arrastrar el panel arriba/abajo
             const SizedBox(height: 12),
             Center(
               child: Container(
@@ -539,7 +549,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
             ),
             const SizedBox(height: 16),
 
-            // ------ Cabecera — fecha + modo de control + SITL + estado 
+            // ------ Cabecera del detalle: fecha, estado y chips (modo + SITL)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 20),
               child: Row(
@@ -630,7 +640,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
             ),
             const SizedBox(height: 16),
 
-            // -------- Mapa satelital con trayectoria del vuelo 
+            // -------- Mapa satelital con la trayectoria del vuelo
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Container(
@@ -649,14 +659,14 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                             initialZoom: 17,
                           ),
                           children: [
-                            // Tiles satélite ArcGIS — mismo proveedor que EZDrone
+                            // Capa de tiles satélite de ArcGIS (el mismo que EZDrone)
                             TileLayer(
                               urlTemplate:
                                   'https://server.arcgisonline.com/ArcGIS/rest/services/'
                                   'World_Imagery/MapServer/tile/{z}/{y}/{x}',
                               userAgentPackageName: 'com.example.app',
                             ),
-                            // Trail completo en gris de fondo
+                            // Trayectoria completa, en gris de fondo
                             PolylineLayer(
                               polylines: [
                                 Polyline(
@@ -666,7 +676,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                                 ),
                               ],
                             ),
-                            // Trail visible hasta _playIndex en violeta
+                            // Tramo ya recorrido (hasta el slider), en violeta
                             if (visibleTrail.length >= 2)
                               PolylineLayer(
                                 polylines: [
@@ -677,7 +687,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                                   ),
                                 ],
                               ),
-                            // Marcadores takeoff / landing / posición actual
+                            // Marcadores: despegue, aterrizaje y flecha de posición actual
                             MarkerLayer(
                               markers: [
                                 _buildMarker(
@@ -739,7 +749,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
               ),
             ),
 
-            // ------- Slider temporal 
+            // ------- Slider temporal: arrastra para recorrer el vuelo
             if (hasTrail) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -807,7 +817,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
             ],
             const SizedBox(height: 20),
 
-            // ------- Estadísticas
+            // ------- Rejilla de estadísticas (dos tarjetas por fila)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Column(
@@ -888,7 +898,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
             ),
             const SizedBox(height: 24),
 
-            // -------- Botón DOWNLOAD CSV 
+            // -------- Botón DOWNLOAD CSV (desactivado si no hay log)
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: SizedBox(
@@ -923,7 +933,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
 
 // -------- TARJETA DE ESTADÍSTICA --------------------------
 
-// Tarjeta rectangular con icono + etiqueta + valor para mostrar una estadística concreta de la sesión en el detail sheet.
+// Tarjeta (icono + etiqueta + valor) para una estadística del panel de detalle.
+// valueColor deja pintar el valor en rojo/ámbar según el caso (p. ej. batería baja).
 class _StatCard extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -977,7 +988,7 @@ class _StatCard extends StatelessWidget {
 
 // -------- HELPERS ----------------------------
 
-/// Color del chip según el modo de control.
+// Color del chip según el modo de control (classic/voice/imu)
 Color _modeColor(String mode) {
   switch (mode.toLowerCase()) {
     case 'classic':
@@ -991,7 +1002,7 @@ Color _modeColor(String mode) {
   }
 }
 
-// Formatea una duración como H:MM:SS o MM:SS.
+// Formatea una duración como H:MM:SS (o MM:SS si no llega a una hora)
 String _formatDuration(Duration d) {
   final h = d.inHours;
   final m = d.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -999,13 +1010,13 @@ String _formatDuration(Duration d) {
   return h > 0 ? '$h:$m:$s' : '$m:$s';
 }
 
-// Formatea una distancia en metros o kilómetros con unidades.
+// Formatea una distancia: metros por debajo de 1 km, si no en kilómetros
 String _formatDistance(double meters) {
   if (meters < 1000) return '${meters.toStringAsFixed(0)} m';
   return '${(meters / 1000).toStringAsFixed(2)} km';
 }
 
-// Formatea una fecha como DD MMM YYYY  HH:MM.
+// Formatea una fecha como "DD Mmm YYYY · HH:MM"
 String _formatDate(DateTime dt) {
   const months = [
     'Jan',

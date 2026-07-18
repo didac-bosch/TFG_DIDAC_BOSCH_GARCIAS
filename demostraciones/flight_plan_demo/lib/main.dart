@@ -8,27 +8,27 @@ import 'package:latlong2/latlong.dart';
 import 'package:web/web.dart' as web;
 
 // ============================================================
-// DEMO: FLIGHT PLAN - CREACIÓN DE MISIONES CON WAYPOINTS
+// DEMO: FLIGHT PLAN — PLANIFICAR MISIONES CON WAYPOINTS
 // ============================================================
 //
-// Esta app demuestra cómo crear un plan de vuelo con waypoints
-// para un dron ArduPilot y exportarlo como JSON listo para
-// ser enviado a la estación tierra.
+// Esta app enseña a montar un plan de vuelo a base de waypoints para
+// un dron ArduPilot y a exportarlo como JSON, ya listo para mandárselo
+// a la estación de tierra.
 //
 // LIBRERÍAS:
-//   flutter_map: ^7.0.2  - Mapa satelital interactivo (ArcGIS)
-//   latlong2: ^0.9.1     - Coordenadas geográficas
+//   flutter_map: ^7.0.2  - Mapa satelital interactivo (tiles de ArcGIS)
+//   latlong2: ^0.9.1     - Tipo LatLng para las coordenadas
 //
 // FUNCIONAMIENTO:
-//   1. El usuario toca el mapa para colocar waypoints numerados.
-//   2. Tapping un marcador abre un diálogo para editar:
-//        - Altitud (2–120 m)
+//   1. Se toca el mapa y va apareciendo un waypoint numerado por cada toque.
+//   2. Al tocar un marcador se abre un diálogo para editarlo:
+//        - Altitud (entre 2 y 120 m)
 //        - Acción al llegar: none / hover / photo / record / RTL / land
-//        - Duración (para hover y record)
-//   3. Los waypoints son reordenables con drag & drop.
-//   4. DOWNLOAD exporta el plan completo como JSON.
+//        - Duración (solo para hover y record)
+//   3. Los waypoints se pueden reordenar arrastrándolos en la lista.
+//   4. El botón DOWNLOAD baja el plan entero como fichero JSON.
 //
-// FORMATO JSON EXPORTADO:
+// FORMATO DEL JSON EXPORTADO:
 //   {
 //     "id": "1715000000000",
 //     "name": "Plan 01 May 2025",
@@ -43,27 +43,29 @@ import 'package:web/web.dart' as web;
 //     ]
 //   }
 //
-// ACCIONES POR WAYPOINT:
-//   none        - Pasa al siguiente sin detenerse
-//   hover       - Mantiene posición N segundos
-//   takePhoto   - Dispara cámara
-//   recordVideo - Graba N segundos
-//   rtl         - Return to Launch (termina misión)
-//   land        - Aterriza en ese punto
+// ACCIONES DISPONIBLES POR WAYPOINT:
+//   none        - sigue al siguiente sin pararse
+//   hover       - se queda quieto N segundos
+//   takePhoto   - dispara la cámara
+//   recordVideo - graba vídeo durante N segundos
+//   rtl         - Return to Launch (da la misión por terminada)
+//   land        - aterriza en ese punto
 //
-// INTEGRACIÓN EN EZDRONE:
-//   El JSON generado aquí es exactamente el formato que
-//   EZDrone envía vía MQTT al topic:
+// CÓMO ENCAJA EN EZDRONE:
+//   El JSON que sale de aquí es exactamente el formato que EZDrone
+//   publica por MQTT en el topic:
 //     mobileFlutter/groundStation/mission
-//   La estación tierra (estacion_tierra.py) lo recibe,
-//   lo carga en ArduPilot vía DroneKit y ejecuta cada
-//   waypoint secuencialmente.
+//   La estación de tierra (estacion_tierra.py) lo recibe, lo carga en
+//   ArduPilot con DroneKit y va ejecutando los waypoints en orden.
 // ============================================================
 
-// -------- Modelos -----------------------------------------------------------------
+// -------- MODELOS -----------------------------------------------------------------
+
+// Tipos de acción que puede tener un waypoint
 enum WaypointActionType { none, hover, takePhoto, recordVideo, rtl, land }
 
-// Acción asociada a un waypoint: tipo + duración (si aplica)
+// Acción que ejecuta el dron al llegar a un waypoint: el tipo + su duración
+// (los segundos solo se usan en hover y record)
 class WaypointAction {
   final WaypointActionType type;
   final double seconds;
@@ -75,7 +77,7 @@ class WaypointAction {
   WaypointAction copyWith({WaypointActionType? type, double? seconds}) =>
       WaypointAction(type: type ?? this.type, seconds: seconds ?? this.seconds);
 
-  // Etiqueta legible para el tipo de acción
+  // Texto corto para mostrar la acción en la interfaz
   String get label {
     switch (type) {
       case WaypointActionType.none:
@@ -92,11 +94,11 @@ class WaypointAction {
         return 'Land';
     }
   }
-  // Conversión a JSON (tipo como string + segundos)
+  // Vuelca la acción a JSON (el tipo como texto + los segundos)
   Map<String, dynamic> toJson() => {'type': type.name, 'seconds': seconds};
 }
 
-// Waypoint de vuelo: latitud, longitud, altitud y acción
+// Un waypoint del plan: dónde (lat, lon), a qué altura y qué hacer al llegar
 class FlightWaypoint {
   final double lat;
   final double lon;
@@ -126,9 +128,9 @@ class FlightWaypoint {
   };
 }
 
-// -------- Colores -----------------------------------------------------------------
+// -------- COLORES -----------------------------------------------------------------
 
-// Paleta de colores personalizada para la app
+// Paleta de colores de la app (mismos tonos oscuros que EZDrone)
 class C {
   static const bg = Color(0xFF1E1E2E);
   static const surface = Color(0xFF2A2A3E);
@@ -142,6 +144,7 @@ class C {
 
   // ----------  MAIN  -------------------------------------------------------
 
+// Punto de entrada: monta la app sin la cinta de debug
 void main() {
   runApp(
     const MaterialApp(
@@ -151,9 +154,9 @@ void main() {
   );
 }
 
-// ---------- Widget principal ---------------------------------------------------
+// ---------- WIDGET PRINCIPAL ---------------------------------------------------
 
-// Widget principal que contiene el mapa, la lista de waypoints y el botón de descarga
+// Pantalla de la demo: junta el mapa, la lista de waypoints y el botón de descarga
 class FlightPlanDemo extends StatefulWidget {
   const FlightPlanDemo({super.key});
   @override
@@ -161,21 +164,22 @@ class FlightPlanDemo extends StatefulWidget {
 }
 
 class _FlightPlanDemoState extends State<FlightPlanDemo> {
-  final MapController _mapController = MapController();
-  List<FlightWaypoint> _waypoints = [];
+  final MapController _mapController = MapController(); // controla el mapa (mover/zoom)
+  List<FlightWaypoint> _waypoints = [];                 // waypoints del plan, en orden
 
-  // Centro por defecto: EETAC 
+  // Punto donde arranca el mapa si aún no hay waypoints: el campus de la EETAC
   static const LatLng _defaultCenter = LatLng(41.2765, 1.9888);
 
+  // Al cerrar la pantalla se libera el controlador del mapa
   @override
   void dispose() {
     _mapController.dispose();
     super.dispose();
   }
 
-  // ------ Acciones sobre waypoints -----------------------------------------------
+  // ------ ACCIONES SOBRE WAYPOINTS -----------------------------------------------
 
-  // Al tocar el mapa, se añade un nuevo waypoint al final de la lista
+  // Cada toque en el mapa añade un waypoint nuevo al final de la lista
   void _onMapTap(TapPosition _, LatLng point) {
     setState(() {
       _waypoints = [
@@ -185,12 +189,12 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     });
   }
 
-  // Elimina un waypoint por índice
+  // Borra el waypoint que está en esa posición de la lista
   void _removeWaypoint(int index) {
     setState(() => _waypoints = List.from(_waypoints)..removeAt(index));
   }
 
-  // Reordena los waypoints tras un drag & drop en la lista
+  // Recoloca un waypoint después de arrastrarlo a otra posición
   void _reorderWaypoints(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex--;
     setState(() {
@@ -201,12 +205,12 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     });
   }
 
-  // ------ Descarga del JSON ----------------------------------------------
+  // ------ DESCARGA DEL JSON ----------------------------------------------
   //
-  // En Flutter Web la descarga se hace creando un Blob, generando una URL
-  // temporal y disparando un click sobre un <a download>. Fuera de Web
-  // (móvil/escritorio) no aplica ese mecanismo, así que se muestra el JSON
-  // en un diálogo como alternativa.
+  // En Flutter Web bajar un fichero se hace a mano: se crea un Blob, se le
+  // saca una URL temporal y se simula un click sobre un <a download>. Fuera
+  // de Web (móvil/escritorio) eso no vale, así que en su lugar se enseña el
+  // JSON en un diálogo para poder copiarlo.
   void _downloadJson() {
     if (_waypoints.isEmpty) return;
     final plan = {
@@ -220,12 +224,12 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     if (kIsWeb) {
       _descargarWeb(jsonStr, 'application/json', filename);
     } else {
-      // Sin descarga nativa en esta demo: mostramos el JSON para copiarlo.
+      // Fuera de Web no hay descarga nativa en esta demo: se muestra el JSON
       _showJsonPreview(jsonStr);
     }
   }
 
-  // Descarga real en navegador: Blob → objectURL → <a download>.click().
+  // Descarga de verdad en el navegador: Blob -> objectURL -> click en <a download>
   void _descargarWeb(String contenido, String mime, String filename) {
     final blob = web.Blob(
       [contenido.toJS].toJS,
@@ -239,7 +243,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     web.URL.revokeObjectURL(url);
   }
 
-  // Muestra el JSON generado en un diálogo con texto seleccionable
+  // Enseña el JSON en un diálogo con el texto seleccionable (para copiarlo)
   void _showJsonPreview(String jsonStr) {
     showDialog(
       context: context,
@@ -283,9 +287,9 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     );
   }
 
-  // ------ Helpers ------------------------------------------------
+  // ------ HELPERS ------------------------------------------------
 
-  // Genera un nombre de plan basado en la fecha actual
+  // Nombre automático del plan a partir de la fecha de hoy
   String get _planName {
     final now = DateTime.now();
     const m = [
@@ -305,12 +309,12 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     return 'Plan ${now.day} ${m[now.month - 1]} ${now.year}';
   }
 
-  // Calcula la distancia total de la ruta sumando las distancias entre waypoints
+  // Longitud total de la ruta: suma de las distancias entre waypoints seguidos
   double get _totalDistM {
     if (_waypoints.length < 2) return 0;
     double d = 0;
     for (int i = 1; i < _waypoints.length; i++) {
-      const R = 6371000.0;
+      const R = 6371000.0; // radio de la Tierra en metros (para Haversine)
       final a = _waypoints[i - 1];
       final b = _waypoints[i];
       final lat1 = a.lat * pi / 180;
@@ -325,10 +329,12 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     return d;
   }
 
+  // Formatea una distancia: metros por debajo de 1 km, si no en kilómetros
   String _fmtDist(double m) => m < 1000
       ? '${m.toStringAsFixed(0)} m'
       : '${(m / 1000).toStringAsFixed(2)} km';
 
+  // Centra el mapa en la media de todos los waypoints (o en la EETAC si no hay)
   LatLng get _mapCenter {
     if (_waypoints.isEmpty) return _defaultCenter;
     final lat =
@@ -340,6 +346,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     return LatLng(lat, lon);
   }
 
+  // Color con el que se pinta cada tipo de acción (en marcador y en la lista)
   Color _actionColor(WaypointActionType t) {
     switch (t) {
       case WaypointActionType.none:
@@ -357,9 +364,9 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     }
   }
 
-  // ------ Diálogo edición de waypoint -----------------------------------------------
+  // ------ DIÁLOGO DE EDICIÓN DE WAYPOINT -----------------------------------------------
 
-  // Abre un diálogo para editar la altitud y acción de un waypoint
+  // Abre el diálogo para cambiar la altitud y la acción de un waypoint
   void _editWaypoint(int index) {
     final wp = _waypoints[index];
     final altCtrl = TextEditingController(text: wp.altM.toStringAsFixed(1));
@@ -385,7 +392,8 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
       }
     }
 
-    // El diálogo se reconstruye con StatefulBuilder para actualizar la selección de acción
+    // StatefulBuilder deja repintar solo el diálogo al cambiar la acción elegida,
+    // sin tener que reconstruir toda la pantalla
     showDialog(
       context: context,
       builder: (_) => StatefulBuilder(
@@ -511,7 +519,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     );
   }
 
-  // Estilo de los TextField en el diálogo de edición de waypoint
+  // Decoración común de los TextField del diálogo (altitud y duración)
   InputDecoration _inputDec({String? suffix}) => InputDecoration(
     filled: true,
     fillColor: C.bg,
@@ -531,7 +539,8 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
 
   // ------ BUILD -------------------------------------------
 
-  // Construye la interfaz principal con el mapa, la lista de waypoints y el botón de descarga
+  // Monta la pantalla: barra superior, mapa arriba, lista de waypoints en
+  // medio y el botón de descarga abajo
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -607,7 +616,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
       ),
       body: Column(
         children: [
-          // Mapa satelital
+          // Mapa satelital (ocupa la mitad de arriba)
           Expanded(
             flex: 5,
             child: Stack(
@@ -625,7 +634,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                           'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                       userAgentPackageName: 'com.example.flight_plan_demo',
                     ),
-                    // Línea de ruta
+                    // Línea que une los waypoints en orden (la ruta)
                     if (_waypoints.length >= 2)
                       PolylineLayer(
                         polylines: [
@@ -638,7 +647,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                           ),
                         ],
                       ),
-                    // Marcadores numerados
+                    // Marcadores numerados (verde el primero, rojo el último)
                     MarkerLayer(
                       markers: [
                         for (int i = 0; i < _waypoints.length; i++)
@@ -681,7 +690,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                     ),
                   ],
                 ),
-                // Hint sin waypoints
+                // Pista flotante mientras el plan está vacío
                 if (_waypoints.isEmpty)
                   Positioned(
                     top: 12,
@@ -704,7 +713,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                       ),
                     ),
                   ),
-                // Stats overlay (distancia total)
+                // Recuadro con el resumen (nº de waypoints + distancia total)
                 if (_waypoints.length >= 2)
                   Positioned(
                     top: 10,
@@ -732,7 +741,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
             ),
           ),
 
-          // Lista reordenable de waypoints
+          // Lista de waypoints, reordenable arrastrando (mitad de abajo)
           Expanded(
             flex: 4,
             child: _waypoints.isEmpty
@@ -766,7 +775,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                   ),
           ),
 
-          // Botón DOWNLOAD JSON
+          // Botón DOWNLOAD JSON (desactivado si no hay waypoints)
           Container(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
             color: C.surface,
@@ -798,9 +807,10 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
   }
 }
 
-// ------ Row de waypoint en la lista -------------------------------
+// ------ FILA DE WAYPOINT EN LA LISTA -------------------------------
 
-// Widget que representa cada waypoint en la lista, con su número, coordenadas, altitud, acción y botón de eliminación. Es reordenable con drag & drop.
+// Cada fila de la lista: número, coordenadas, altitud, la etiqueta de acción
+// y el botón de borrar. Lleva un asa para arrastrarla y reordenar el plan.
 class _WaypointRow extends StatelessWidget {
   final int index;
   final FlightWaypoint waypoint;

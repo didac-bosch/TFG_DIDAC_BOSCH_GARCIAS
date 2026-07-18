@@ -2,21 +2,6 @@ import 'dart:async';
 import 'dart:js_interop';
 import 'package:flutter/material.dart';
 
-@JS('requestMotionPermission')
-external void requestMotionPermission();
-
-@JS('stopOrientation')
-external void stopOrientation();
-
-@JS('getAlpha')
-external double getAlpha();
-
-@JS('getBeta')
-external double getBeta();
-
-@JS('getGamma')
-external double getGamma();
-
 // ============================================================
 // IMU DEMO — Lee los ángulos del dispositivo desde el navegador
 //
@@ -64,6 +49,22 @@ external double getGamma();
 // ============================================================
 
 
+// Puentes JS para llamar a funciones definidas en web/index.html
+@JS('requestMotionPermission')
+external void requestMotionPermission();
+
+@JS('stopOrientation')
+external void stopOrientation();
+
+@JS('getAlpha')
+external double getAlpha();
+
+@JS('getBeta')
+external double getBeta();
+
+@JS('getGamma')
+external double getGamma();
+
 void main() {
   runApp(const MaterialApp(
     home: ImuDemo(),
@@ -75,14 +76,15 @@ class ImuDemo extends StatefulWidget {
   @override
   State<ImuDemo> createState() => _ImuDemoState();
 }
-
 class _ImuDemoState extends State<ImuDemo> {
+  // variables para almacenar los ángulos y el estado de activación
   double _pitch = 0.0;
   double _roll  = 0.0;
   double _yaw   = 0.0;
   bool _active  = false;
   Timer? _timer;
 
+  // Solicita permiso y empieza a leer los ángulos a 20Hz
   void _requestAndStart() {
     requestMotionPermission();
     // Poll els valors JS cada 50ms (20Hz)
@@ -107,12 +109,14 @@ class _ImuDemoState extends State<ImuDemo> {
     });
   }
 
+  // Cancela el Timer al cerrar la app
   @override
   void dispose() {
     _timer?.cancel();
     super.dispose();
   }
 
+  // pantalla principal con los tres ángulos y el botón de activación
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -127,13 +131,16 @@ class _ImuDemoState extends State<ImuDemo> {
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
+              children: [ // tres cajas para mostrar los ángulos
                 _buildAngleBox('PITCH', _pitch, Colors.blue),
                 _buildAngleBox('ROLL',  _roll,  Colors.green),
                 _buildAngleBox('YAW',   _yaw,   Colors.orange),
               ],
             ),
+
             const SizedBox(height: 48),
+
+            // botón para activar/desactivar la lectura de sensores
             ElevatedButton(
               style: ElevatedButton.styleFrom(
                 backgroundColor: _active ? Colors.red : Colors.green,
@@ -155,6 +162,7 @@ class _ImuDemoState extends State<ImuDemo> {
     );
   }
 
+  // Construye una caja para mostrar un ángulo con su etiqueta y color
   Widget _buildAngleBox(String label, double value, Color color) {
     return Container(
       width: 100,

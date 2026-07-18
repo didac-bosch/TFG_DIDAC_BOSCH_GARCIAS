@@ -5,36 +5,40 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 // ============================================================
-// TUTORIAL: Vídeo WebRTC + YOLO + captura + grabación
+// DEMO: VÍDEO WEBRTC + YOLO + CAPTURA + GRABACIÓN
+// ============================================================
 //
-// FEATURES:
-// 1. Stream WebRTC con detección YOLO (All / Solo personas / Ninguno)
-// 2. Captura de pantalla → PNG descargado en Descargas
-// 3. Grabación de vídeo  → WebM descargado en Descargas
+// Recibe el vídeo de una cámara por WebRTC y lo muestra en directo, con
+// detección de objetos YOLO aplicada en el lado emisor. Además permite
+// capturar fotogramas y grabar clips desde el propio navegador.
 //
-// La captura y grabación ocurren 100% en el cliente (JS Interop):
-//   index.html expone captureDroneFrame() y startDroneRecording()
-//   Dart llama a estas funciones sin tocar Python
+// FUNCIONAMIENTO:
+//   1. Stream WebRTC con detección YOLO seleccionable (Todo / Personas / Ninguno).
+//   2. Captura de pantalla -> PNG que se descarga en la carpeta Descargas.
+//   3. Grabación de vídeo  -> WebM que se descarga en la carpeta Descargas.
 //
-//   NOTA: webrtc_video_sender.py también implementa captura/grabación
-//   server-side (PNG/mp4 vía comandos {"type":"capture"|"record_start"}).
-//   ESTE cliente NO usa esa vía: solo envía {"type":"detection_mode"} y
-//   captura/graba en el navegador. Las features server-side quedan ahí
-//   como referencia pero este demo no las dispara.
+// CAPTURA Y GRABACIÓN (100 % en el cliente, vía JS Interop):
+//   index.html expone captureDroneFrame() y startDroneRecording(); Dart
+//   simplemente las llama, sin que Python intervenga.
+//
+//   NOTA: webrtc_video_sender.py también sabe capturar y grabar en el
+//   servidor (PNG/mp4 con comandos {"type":"capture"|"record_start"}), pero
+//   este cliente NO usa esa vía: solo manda {"type":"detection_mode"} y hace
+//   la captura/grabación en el navegador. Lo server-side queda de referencia.
 //
 // REQUISITOS:
-//   1. index.html debe definir las funciones JS (captureDroneFrame, etc.)
+//   1. index.html debe definir las funciones JS (captureDroneFrame, etc.).
 //   2. Arrancar el emisor: python webrtc_video_sender.py
-//      (deps: torch, opencv-python, aiortc, av, websockets)
-//   3. Poner en senderIP la IP de la máquina que corre ese script
-//      (misma red). senderPort debe coincidir con el del sender.
+//      (dependencias: torch, opencv-python, aiortc, av, websockets).
+//   3. Poner en senderIP la IP del PC que corre ese script (misma red) y en
+//      senderPort el mismo puerto que use el emisor.
 // ============================================================
 
 // IP del PC que ejecuta webrtc_video_sender.py — CAMBIAR según tu red.
 const String senderIP = '192.168.0.84';
 const int senderPort  = 9999;
 
-// ── JS Interop — funciones definidas en index.html ─────────────────
+// ── Puentes JS Interop — funciones definidas en index.html ─────────
 @JS('captureDroneFrame')
 external void _jsCapture(String filename);
 
@@ -44,7 +48,7 @@ external void _jsStartRecording();
 @JS('stopDroneRecording')
 external void _jsStopRecording(String filename);
 
-// Tres modos de detección YOLO
+// Los tres modos de detección YOLO que ofrece la demo
 enum DetectionMode { all, person, none }
 
 class VideoScreen extends StatefulWidget {
@@ -55,16 +59,19 @@ class VideoScreen extends StatefulWidget {
 }
 
 class _VideoScreenState extends State<VideoScreen> {
-  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
-  RTCPeerConnection? _peerConnection;
-  WebSocketChannel? _wsChannel;
+  // Objetos WebRTC / señalización
+  final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer(); // pinta el stream remoto
+  RTCPeerConnection? _peerConnection;                          // conexión WebRTC
+  WebSocketChannel? _wsChannel;                                // canal de señalización (SDP)
 
-  bool   _isConnected      = false;
-  String _status            = 'Desconectado';
-  DetectionMode _mode       = DetectionMode.all;
-  bool   _isRecording       = false;
-  bool   _showCaptureFlash  = false;
+  // VARIABLES DE ESTADO
+  bool   _isConnected      = false;              // true cuando llega el track de vídeo
+  String _status            = 'Desconectado';    // texto de estado que se muestra en pantalla
+  DetectionMode _mode       = DetectionMode.all; // modo YOLO activo
+  bool   _isRecording       = false;             // true mientras se está grabando
+  bool   _showCaptureFlash  = false;             // flash blanco al hacer una captura
 
+  // Se llama al crear el widget: prepara el renderer de vídeo
   @override
   void initState() {
     super.initState();
@@ -76,11 +83,14 @@ class _VideoScreenState extends State<VideoScreen> {
   }
 
   // ── ENVÍO DE COMANDOS A PYTHON ─────────────────────────────────
+  // Serializa el comando a JSON y lo manda por el WebSocket al emisor.
   void _sendCommand(Map<String, dynamic> cmd) {
     _wsChannel?.sink.add(json.encode(cmd));
   }
 
   // ── CONEXIÓN ───────────────────────────────────────────────────
+  // Crea la PeerConnection, se suscribe al track de vídeo y abre el
+  // WebSocket por el que llegará la oferta SDP del emisor.
   Future<void> _connect() async {
     setState(() => _status = 'Conectando...');
     _peerConnection = await createPeerConnection({
@@ -89,6 +99,7 @@ class _VideoScreenState extends State<VideoScreen> {
       ]
     });
 
+    // Cuando llega el track de vídeo, se enchufa al renderer y se marca conectado
     _peerConnection!.onTrack = (RTCTrackEvent event) {
       if (event.track.kind == 'video') {
         setState(() {
@@ -103,6 +114,7 @@ class _VideoScreenState extends State<VideoScreen> {
       Uri.parse('ws://$senderIP:$senderPort'),
     );
 
+    // El emisor manda una oferta SDP; se procesa cuando llega
     _wsChannel!.stream.listen((message) async {
       final data = json.decode(message);
       if (data['type'] == 'sdp' && data['sdp_type'] == 'offer') {
@@ -111,6 +123,7 @@ class _VideoScreenState extends State<VideoScreen> {
     });
   }
 
+  // Responde a la oferta SDP del emisor con la answer (handshake WebRTC)
   Future<void> _handleOffer(Map<String, dynamic> data) async {
     setState(() => _status = 'Conectando...');
     final offer = RTCSessionDescription(data['sdp'], data['sdp_type']);
@@ -121,11 +134,12 @@ class _VideoScreenState extends State<VideoScreen> {
       'type': 'sdp', 'sdp': answer.sdp, 'sdp_type': answer.type,
     }));
     setState(() => _status = '');
-    // Sincronizar modo de detección inicial
+    // Ya conectados: se manda el modo de detección con el que arranca la UI
     _sendDetectionMode(_mode);
   }
 
   // ── MODO DE DETECCIÓN ──────────────────────────────────────────
+  // Traduce el enum a string y lo envía a Python para que ajuste YOLO
   void _sendDetectionMode(DetectionMode mode) {
     final str = switch (mode) {
       DetectionMode.all    => 'all',
@@ -136,23 +150,25 @@ class _VideoScreenState extends State<VideoScreen> {
   }
 
   // ── CAPTURA DE FRAME (JS Interop) ──────────────────────────────
+  // Pide al navegador que guarde el fotograma actual como PNG
   void _capture() {
     if (!_isConnected) return;
-    final ts = DateTime.now().millisecondsSinceEpoch;
+    final ts = DateTime.now().millisecondsSinceEpoch; // nombre único por timestamp
     _jsCapture('drone_capture_$ts.png');
-    // Flash blanco de confirmación visual
+    // Flash blanco de 200 ms como confirmación visual
     setState(() => _showCaptureFlash = true);
     Future.delayed(const Duration(milliseconds: 200), () {
       if (mounted) setState(() => _showCaptureFlash = false);
     });
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-      content: Text('📸 Captura guardada en Descargas'),
+      content: Text('Captura guardada en Descargas'),
       duration: Duration(seconds: 2),
       backgroundColor: Colors.green,
     ));
   }
 
   // ── GRABACIÓN DE VÍDEO (JS Interop) ───────────────────────────
+  // Actúa como interruptor: arranca o para la grabación en el navegador
   void _toggleRecording() {
     if (!_isConnected) return;
     if (_isRecording) {
@@ -160,7 +176,7 @@ class _VideoScreenState extends State<VideoScreen> {
       _jsStopRecording('drone_video_$ts.webm');
       setState(() => _isRecording = false);
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('🎥 Vídeo guardado en Descargas'),
+        content: Text('Vídeo guardado en Descargas'),
         duration: Duration(seconds: 2),
         backgroundColor: Colors.blue,
       ));
@@ -171,8 +187,10 @@ class _VideoScreenState extends State<VideoScreen> {
   }
 
   // ── DESCONEXIÓN ────────────────────────────────────────────────
+  // Cierra WebRTC y WebSocket y deja el estado como al principio
   Future<void> _disconnect() async {
     if (_isRecording) {
+      // si estaba grabando, se cierra el fichero antes de cortar
       final ts = DateTime.now().millisecondsSinceEpoch;
       _jsStopRecording('drone_video_$ts.webm');
     }
@@ -188,6 +206,7 @@ class _VideoScreenState extends State<VideoScreen> {
     });
   }
 
+  // Se llama al cerrar la pantalla: corta la conexión y libera el renderer
   @override
   void dispose() {
     _disconnect();
@@ -211,7 +230,7 @@ class _VideoScreenState extends State<VideoScreen> {
           Expanded(
             child: Stack(
               children: [
-                // Stream o estado
+                // Si hay conexión se muestra el stream; si no, el texto de estado
                 _isConnected
                     ? RTCVideoView(_remoteRenderer,
                         objectFit: RTCVideoViewObjectFit
@@ -220,11 +239,11 @@ class _VideoScreenState extends State<VideoScreen> {
                         style: const TextStyle(
                             color: Colors.white, fontSize: 18))),
 
-                // Flash blanco al capturar
+                // Flash blanco que aparece un instante al capturar
                 if (_showCaptureFlash)
-                  Container(color: Colors.white.withOpacity(0.65)),
+                  Container(color: Colors.white.withValues(alpha: 0.65)),
 
-                // Badge REC
+                // Indicador REC en la esquina mientras se graba
                 if (_isRecording)
                   Positioned(
                     top: 12, right: 12,
@@ -248,7 +267,7 @@ class _VideoScreenState extends State<VideoScreen> {
                     ),
                   ),
 
-                // Botones de captura y grabación (solo si conectado)
+                // Botones de captura y grabación (solo si hay conexión)
                 if (_isConnected)
                   Positioned(
                     bottom: 12, left: 12,
@@ -284,7 +303,7 @@ class _VideoScreenState extends State<VideoScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
 
-                // Selector de modo de detección
+                // Selector de modo de detección: un chip por modo YOLO
                 Row(children: [
                   const Text('Detección:',
                       style: TextStyle(
@@ -326,7 +345,7 @@ class _VideoScreenState extends State<VideoScreen> {
 
                 const SizedBox(height: 10),
 
-                // Estado + botones conectar/desconectar
+                // Texto de estado + botones de conectar / desconectar
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -357,7 +376,7 @@ class _VideoScreenState extends State<VideoScreen> {
   }
 }
 
-// ── WIDGET: botón de acción sobre el vídeo ─────────────────────────
+// ── WIDGET: botón de acción flotante sobre el vídeo (captura / grabar) ──
 class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String tooltip;
@@ -391,12 +410,12 @@ class _ActionButton extends StatelessWidget {
   }
 }
 
-// ── WIDGET: chip de modo de detección ──────────────────────────────
+// ── WIDGET: chip seleccionable de modo de detección ────────────────
 class _ModeChip extends StatelessWidget {
   final String label;
   final IconData icon;
-  final bool selected;
-  final bool enabled;
+  final bool selected;   // true si es el modo activo (se pinta resaltado)
+  final bool enabled;    // false mientras no haya conexión (chip apagado)
   final VoidCallback onTap;
 
   const _ModeChip({

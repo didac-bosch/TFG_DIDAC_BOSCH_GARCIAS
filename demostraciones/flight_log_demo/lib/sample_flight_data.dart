@@ -1,22 +1,23 @@
 // ===========================================================================
-// SAMPLE FLIGHT DATA 
+// SAMPLE FLIGHT DATA
 // ===========================================================================
-// Este fichero define los modelos de datos y genera los tres vuelos de ejemplo
-// que usa la demo del Flight Log Viewer.
+// Aquí se definen los modelos de datos y se fabrican los tres vuelos de ejemplo
+// que alimentan la demo del Flight Log Viewer.
 //
-// En EZDrone real este fichero equivale a las clases FlightSession y FlightLog
-// del Provider (provider.dart), donde los datos se acumulan en tiempo real
-// durante el vuelo. Aquí los datos se generan sintéticamente para la demo.
+// En el EZDrone real, este fichero se correspondería con las clases
+// FlightSession y FlightLog del Provider (provider.dart): allí los datos se van
+// acumulando en directo mientras el dron vuela. Aquí, en cambio, se generan de
+// forma sintética para tener algo que enseñar sin necesidad de volar.
 //
-// Modelos exportados:
-//   • FlightLog     — snapshot de telemetría de un instante concreto
-//   • FlightSession — sesión de vuelo completa (trayectoria + log + métricas)
+// MODELOS QUE EXPORTA:
+//   FlightLog     - foto de la telemetría en un instante concreto
+//   FlightSession - un vuelo entero (trayectoria + log + métricas)
 //
-// Datos de ejemplo:
-//   • sampleSessions — lista con 3 vuelos sobre el campus EETAC (Castelldefels)
-//       1. Vuelo cuadrado a 20 m  (CLASSIC + SITL, completado,   4 min 32 s)
-//       2. Vuelo triangular a 30 m (IMU,           completado,   6 min 10 s)
-//       3. Vuelo parcial a 15 m   (VOICE + SITL,  interrumpido, 1 min 48 s)
+// DATOS DE EJEMPLO:
+//   sampleSessions - tres vuelos sobre el campus de la EETAC (Castelldefels):
+//     1. Cuadrado a 20 m   (CLASSIC + SITL, completado,    4 min 32 s)
+//     2. Triángulo a 30 m  (IMU,            completado,    6 min 10 s)
+//     3. Vuelo parcial 15 m (VOICE + SITL,  interrumpido,  1 min 48 s)
 // ===========================================================================
 
 import 'dart:math';
@@ -24,18 +25,17 @@ import 'package:latlong2/latlong.dart';
 
 // -------- MODELOS ------------------------------------------------
 
-// Snapshot de telemetría grabado una vez por segundo durante el vuelo.
-
-// Columnas del CSV exportado:
+// Instantánea de telemetría, tomada una vez por segundo durante el vuelo.
+// Cada FlightLog es una fila del CSV que se exporta:
 //   timestamp | lat | lon | alt_m | speed_ms | bat_pct | heading_deg
 class FlightLog {
   final DateTime timestamp;
   final double lat;
   final double lon;
-  final double alt;      // metros sobre el punto de despegue
-  final double speed;    // m/s
-  final double bat;      // porcentaje 0–100
-  final double heading;  // grados 0–360
+  final double alt;      // altura sobre el punto de despegue, en metros
+  final double speed;    // velocidad en m/s
+  final double bat;      // batería restante, 0-100 %
+  final double heading;  // rumbo en grados, 0-360
 
   const FlightLog({
     required this.timestamp,
@@ -48,17 +48,17 @@ class FlightLog {
   });
 }
 
-// Sesión de vuelo completa.
-// Equivale a FlightSession en el Provider de EZDrone, donde los campos
-// se rellenan en tiempo real durante el vuelo y se guardan al aterrizar.
+// Un vuelo completo. Es el equivalente a FlightSession en el Provider de
+// EZDrone, donde los campos se van rellenando en directo y se guardan al
+// aterrizar.
 class FlightSession {
   final DateTime startTime;
   final Duration duration;
-  final String controlMode;  // 'classic' | 'voice' | 'imu'
-  final bool isSitl;
-  final bool completed;
-  final List<LatLng> trail;   // posiciones GPS de la trayectoria
-  final List<FlightLog> log;  // snapshots de telemetría (1 por segundo aprox.)
+  final String controlMode;  // modo de control: 'classic' | 'voice' | 'imu'
+  final bool isSitl;         // true si el vuelo fue en el simulador SITL
+  final bool completed;      // false si el vuelo se interrumpió a media misión
+  final List<LatLng> trail;   // trayectoria: lista de posiciones GPS
+  final List<FlightLog> log;  // telemetría: una instantánea por segundo (aprox.)
 
   const FlightSession({
     required this.startTime,
@@ -72,22 +72,22 @@ class FlightSession {
 
   // -------- Métricas calculadas -----------------------------------------------
 
-  // Altitud máxima alcanzada durante el vuelo (m).
+  // Altura máxima que alcanzó el dron (m).
   double get maxAlt   => log.isEmpty ? 0 : log.map((s) => s.alt).reduce(max);
 
-  // Velocidad máxima registrada (m/s).
+  // Velocidad punta del vuelo (m/s).
   double get maxSpeed => log.isEmpty ? 0 : log.map((s) => s.speed).reduce(max);
 
-  // Batería mínima registrada (%).
+  // Nivel de batería más bajo que se llegó a registrar (%).
   double get minBat   => log.isEmpty ? 100 : log.map((s) => s.bat).reduce(min);
 
-  // Desnivel: diferencia entre la altitud máxima y la altitud de despegue (m).
+  // Desnivel ganado: diferencia entre la altura máxima y la de despegue (m).
   double get altGain {
     if (log.length < 2) return 0;
     return log.map((s) => s.alt).reduce(max) - log.first.alt;
   }
 
-  // Distancia total recorrida calculada con la fórmula de Haversine (m).
+  // Distancia total recorrida, sumando tramo a tramo con Haversine (m).
   double get totalDistanceM {
     if (trail.length < 2) return 0;
     double d = 0;
@@ -100,14 +100,14 @@ class FlightSession {
 
 // -------- DATOS DE EJEMPLO --------------------------------------------
 
-// Lista de sesiones de ejemplo lista para pasarle a FlightLogScreen.
-// Coordenadas centradas en el campus EETAC
+// Lista de sesiones ya montada y lista para pasarle a FlightLogScreen.
+// Todas las coordenadas caen sobre el campus de la EETAC.
 final List<FlightSession> sampleSessions = _buildSessions();
 
 List<FlightSession> _buildSessions() {
-  final rng = Random(42); // semilla fija, datos reproducibles
+  final rng = Random(42); // semilla fija: así los datos salen siempre iguales
 
-  // --------- Sesión 1: cuadrado a 20 m — CLASSIC + SITL — completado 
+  // --------- Sesión 1: cuadrado a 20 m — CLASSIC + SITL — completado
   final coords1 = const [
     LatLng(41.27450, 1.98800), // despegue
     LatLng(41.27465, 1.98800),
@@ -162,7 +162,7 @@ List<FlightSession> _buildSessions() {
     LatLng(41.27490, 1.98875),
   ];
 
-  // FlightSession con datos generados a partir de las coordenadas.
+  // Se monta cada FlightSession con su trayectoria y su log generado.
   return [
     FlightSession(
       startTime:   DateTime(2026, 4, 10, 10, 15),
@@ -196,10 +196,11 @@ List<FlightSession> _buildSessions() {
 
 // ------- HELPERS ----------------------------------------------
 
-// Genera snapshots de telemetría coherentes con la trayectoria.
-// La altitud sube en el primer 15 % del vuelo, se mantiene y baja en el.  último 15 %. 
-// La batería decae linealmente. El heading apunta al siguiente punto de la trayectoria.
-
+// Fabrica los snapshots de telemetría de forma coherente con la trayectoria:
+//   - la altura sube durante el primer 15 % del vuelo, se mantiene, y baja en
+//     el último 15 %
+//   - la batería cae de forma lineal a lo largo del vuelo
+//   - el heading apunta siempre hacia el siguiente punto de la ruta
 List<FlightLog> _genLog(
   DateTime start,
   List<LatLng> coords,
@@ -210,8 +211,9 @@ List<FlightLog> _genLog(
   final n    = coords.length;
 
   for (int i = 0; i < n; i++) {
-    final t = i / (n - 1);
+    final t = i / (n - 1); // progreso del vuelo, de 0.0 a 1.0
 
+    // Perfil de altura: rampa de subida, crucero con ruido, rampa de bajada
     final double alt;
     if (t < 0.15) {
       alt = targetAlt * (t / 0.15);
@@ -221,12 +223,15 @@ List<FlightLog> _genLog(
       alt = targetAlt + rng.nextDouble() * 1.5 - 0.75;
     }
 
+    // Velocidad: lenta al despegar/aterrizar, de crucero en el tramo central
     final speed = (t < 0.1 || t > 0.9)
         ? rng.nextDouble() * 1.5
         : 3.0 + rng.nextDouble() * 2.5;
 
+    // Batería: baja del 95 % restando un 25 % a lo largo del vuelo, con ruido
     final bat = 95.0 - t * 25.0 - rng.nextDouble() * 2;
 
+    // Heading: rumbo hacia el siguiente punto (fórmula del bearing inicial)
     double heading = 0;
     if (i < n - 1) {
       final from = coords[i];
@@ -254,7 +259,7 @@ List<FlightLog> _genLog(
   return logs;
 }
 
-// Distancia entre dos puntos GPS usando la fórmula de Haversine (metros).
+// Distancia entre dos puntos GPS con la fórmula de Haversine (en metros).
 double _haversineM(LatLng a, LatLng b) {
   const r    = 6371000.0;
   final dLat = (b.latitude  - a.latitude)  * pi / 180;
