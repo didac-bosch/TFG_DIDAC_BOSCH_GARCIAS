@@ -1,4 +1,4 @@
-# ---- Claves y certificados: NUNCA deben subirse a un repositorio ----
+# ---- Claves y certificados ----
 *.pem
 *.key
 *.p12
@@ -27,7 +27,7 @@ Thumbs.db
 # ---- Node ----
 node_modules/
 
-# ---- Salidas de LaTeX (la memoria se compila en Overleaf) ----
+# ---- Salidas de LaTeX ----
 *.aux
 *.log
 *.out
