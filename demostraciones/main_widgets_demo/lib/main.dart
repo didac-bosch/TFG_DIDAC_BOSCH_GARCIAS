@@ -166,10 +166,8 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
                       ),
                     ),
                     style: ElevatedButton.styleFrom(                                              // ESTILO 
-                      // Verde si no armado, rojo si armado 
-                      backgroundColor: _isArmed
-                          ? AppColors.danger
-                          : AppColors.warning,
+                      // Naranja si no armado
+                      backgroundColor: AppColors.warning,
                       disabledBackgroundColor: AppColors.disabled,
                       foregroundColor: AppColors.textPrimary,
                       disabledForegroundColor: AppColors.textSecondary,
@@ -303,7 +301,7 @@ class _WidgetsDemoState extends State<WidgetsDemo> {
             // ---- 2. GestureDetector + AnimatedContainer ------------------------------------------------------------------------------------------
             _sectionHeader(
               '2. GestureDetector + AnimatedContainer',
-              '— Botón táctico con borde',
+              '— Botón con borde',
             ),
             _codeNote(
               'AnimatedContainer con duration 150ms. Fondo semitransparente y borde coloreado cuando está activo.\n'

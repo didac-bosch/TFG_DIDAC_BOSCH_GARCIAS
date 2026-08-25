@@ -23,7 +23,6 @@ class Constants {
   static const String topicFlip = 'mobileFlutter/groundStation/flip';
   static const String topicOrbit = 'mobileFlutter/groundStation/orbit';
   static const String topicFollowMode = 'mobileFlutter/groundStation/followMode';
-  // Panorama 360 — publicar: 'start' | 'stop'
   static const String topicPanorama = 'mobileFlutter/groundStation/panorama360';
 
   // Camera

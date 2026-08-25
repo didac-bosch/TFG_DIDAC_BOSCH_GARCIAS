@@ -48,7 +48,7 @@
         if (e.data.size > 0) _droneChunks.push(e.data);
       };
       _droneRecorder.start(100); // recoge chunks cada 100ms
-      console.log('🔴 Grabación iniciada');
+      console.log(' Grabación iniciada');
     };
 
     // Para la grabación y descarga el .webm
@@ -62,7 +62,7 @@
         a.download = filename;
         a.click();
         URL.revokeObjectURL(url);
-        console.log('🎥 Vídeo guardado:', filename);
+        console.log(' Vídeo guardado:', filename);
       };
       _droneRecorder.stop();
     };

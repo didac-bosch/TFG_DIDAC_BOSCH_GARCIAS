@@ -35,7 +35,7 @@ import 'package:web_socket_channel/web_socket_channel.dart';
 // ============================================================
 
 // IP del PC que ejecuta webrtc_video_sender.py — CAMBIAR según tu red.
-const String senderIP = '192.168.0.84';
+const String senderIP = '192.168.0.42';
 const int senderPort  = 9999;
 
 // ── Puentes JS Interop — funciones definidas en index.html ─────────

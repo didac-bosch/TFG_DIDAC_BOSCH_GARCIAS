@@ -3,7 +3,10 @@ import 'package:flutter/material.dart';
 import '../provider.dart';
 import 'styles.dart';
 
-// Widgets de telemetría y estado del dron, usados en varias pantallas para mostrar información clave de forma compacta y visual. 
+// Widgets de telemetría y estado del dron, usados en varias pantallas para mostrar información clave de forma compacta y visual.
+// Están aquí y no dentro de una pantalla concreta precisamente porque los
+// comparten la pantalla clásica, la de voz y la de IMU: así el piloto ve siempre
+// la misma información con el mismo aspecto, sea cual sea el modo de control.
 
 // ── Status Banner ─────────────────────────────────────────────────────────────
 // Chips de estado (conexión/modo, armado, modo de vuelo, estado de vuelo) +
@@ -236,11 +239,15 @@ class _StatusPillState extends State<StatusPill>
 }
 
 // ── Batería ─────────────────────────────────────────────────────────────
+// Indicador de batería con forma de pila. Es información crítica, así que se
+// codifica por color además de por número: tiene que leerse de un vistazo, sin
+// llegar a mirar la cifra.
 
 class BatteryGauge extends StatelessWidget {
   final double bat;
   const BatteryGauge({super.key, required this.bat});
 
+  // Verde por encima del 50 %, naranja entre 20 y 50, rojo por debajo de 20
   Color get _color {
     if (bat > 50) return AppColors.primary;
     if (bat > 20) return AppColors.warning;
@@ -249,6 +256,7 @@ class BatteryGauge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // El porcentaje se reparte en 5 segmentos (uno por cada 20 %)
     final int filled = (bat / 100 * 5).round().clamp(0, 5);
 
     return Row(

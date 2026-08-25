@@ -1,3 +1,19 @@
+# ============================================================
+# estacion_tierra.py — CEREBRO de la estacion de tierra (ET) de EZDrone.
+#
+# Es el proceso que corre en el PC de tierra y hace de puente entre el dron y la
+# app Flutter. Por un lado habla con el vehiculo (ArduPilot/SITL via dronLink, o
+# DJI Tello via TelloLink); por el otro, con el frontend por dos canales:
+#   - MQTT: comandos discretos (connect, takeoff, land, orbit...) y confirmaciones
+#     de estado (armed, flying, landed...). Todo pasa por on_message().
+#   - WebRTC: el video de la camara (VideoTrack) y el joystick (DataChannel).
+# Ademas orquesta los modos autonomos del Tello (Follow, Orbit y Panorama 360),
+# delegando en follow_controller.py y panorama_controller.py.
+#
+# Modos de vuelo (flight_mode): 'ardupilot' (dron real), 'sitl' (simulador) o
+# 'tello'. Arranca al final del fichero y se queda escuchando comandos MQTT.
+# ============================================================
+
 import paho.mqtt.client as mqtt
 import random
 import threading
@@ -77,6 +93,8 @@ dist_coefs = None
 new_cam_mtx = None
 roi_crop = None
 
+# Carga los parametros de la lente (matriz + coeficientes) del YAML de calibracion.
+# Si no existe el fichero, la ET arranca igual pero sin corregir la distorsion.
 def load_calibration():
     global cam_matrix, dist_coefs, new_cam_mtx, roi_crop
     if not os.path.exists(CALIB_FILE):
@@ -139,6 +157,7 @@ loop = asyncio.new_event_loop()
 # volver a llamarlo, así que nunca hay dos frames en vuelo a la vez.
 _video_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix='video')
 
+# Arranca el event loop de asyncio en su propio hilo (WebRTC vive aqui dentro)
 def _start_loop(lp):
     asyncio.set_event_loop(lp)
     lp.run_forever()
@@ -159,9 +178,9 @@ from panorama_controller import PanoramaController
 
 _follow_ctrl: FollowController = None
 
+# Lo llama FollowController si se le muere el stream de video: resetea los flags
+# de follow/orbit para que la telemetria vuelva a reflejar 'off'.
 def _on_follow_stream_dead():
-    """Callback invocado por FollowController cuando el stream de vídeo muere.
-    Resetea los globals de follow/orbit para que la telemetría refleje 'off'."""
     global _follow_mode, _orbit_active, _follow_ctrl
     print('[FOLLOW] Stream muerto — reseteando estado follow/orbit')
     _follow_mode = False
@@ -169,18 +188,17 @@ def _on_follow_stream_dead():
     _follow_ctrl = None
 
 # --- Callbacks del modo Panorama 360 (invocados desde el hilo del controller) ---
+# Publica el estado del escaneo hacia Flutter. Si el estado es terminal y no es
+# 'done' (ese lo cierra _on_panorama_done), libera el flag de modo activo.
 def _pub_panorama_status(status):
-    """Publica el estado del escaneo hacia Flutter. En estados terminales que no
-    sean 'done' (el 'done' lo cierra _on_panorama_done al entregar la imagen)
-    libera el flag de modo activo."""
     global _panorama_active
     client.publish('groundStation/mobileFlutter/panoramaStatus', status)
     if status in ('error', 'off'):
         _panorama_active = False
 
+# Entrega la panoramica final (JPEG en base64) a Flutter para que la guarde en la
+# galeria, y cierra el modo.
 def _on_panorama_done(b64):
-    """Entrega la panorámica final (base64) a Flutter para que la guarde en la
-    galería, y cierra el modo."""
     global _panorama_active, _panorama_ctrl
     client.publish('groundStation/mobileFlutter/panoramaReady', b64)
     _panorama_active = False
@@ -190,6 +208,7 @@ def _on_panorama_done(b64):
 # MQTT callbacks
 # ============================================================
 
+# Al conectar con el broker MQTT, se suscribe a todos los comandos del frontend
 def on_connect(client, userdata, flags_dict, rc):
     if rc == 0:
         print('Ground Station conectada :)')
@@ -198,6 +217,8 @@ def on_connect(client, userdata, flags_dict, rc):
     else:
         print(f'Error conectando al broker, codigo: {rc}')
 
+# Callback de dronLink: empuja la telemetria del dron (ArduPilot) al frontend por
+# el DataChannel WebRTC en cuanto la libreria la produce.
 def process_telemetry_info(telemetry_info):
     global telemetry_channel
     payload = json.dumps(telemetry_info)
@@ -207,6 +228,10 @@ def process_telemetry_info(telemetry_info):
         except Exception as e:
             print(f'Error enviando telemetría: {e}')
 
+# El Tello no usa dronLink, asi que aqui montamos su telemetria a mano: cada 0.2 s
+# leemos sus datos, los empaquetamos en el mismo formato JSON que el dron ArduPilot
+# (mas los campos extra de follow/orbit) y los mandamos por el DataChannel. Corre en
+# su propio hilo mientras el Tello siga conectado.
 def process_tello_telemetry():
     global telemetry_channel
     while flight_mode == 'tello' and tello is not None and tello.state != 'disconnected':
@@ -214,7 +239,7 @@ def process_tello_telemetry():
             vx = getattr(tello, 'vx_cm_s', 0) or 0
             vy = getattr(tello, 'vy_cm_s', 0) or 0
             # Snapshot local: on_message (hilo MQTT) puede poner _follow_ctrl=None
-            # entre la comprobación del `and` y el acceso al atributo → el GIL no
+            # entre la comprobación del `and` y el acceso al atributo - el GIL no
             # previene este TOCTOU. Capturar la referencia una vez.
             ctrl = _follow_ctrl
             payload = json.dumps({
@@ -242,6 +267,8 @@ def process_tello_telemetry():
             print(f'[TELLO TELEMETRY] Error: {e}')
         time.sleep(0.2)
 
+# Vigila el armado del dron en segundo plano: espera a que armen los motores y, si
+# despues se desarman solos (fallo/timeout), avisa a Flutter con 'disarmed'.
 def monitor_arm_state():
     global _monitoring
     if _monitoring:
@@ -272,9 +299,9 @@ def monitor_arm_state():
         time.sleep(1)
     _monitoring = False
 
+# Convierte un eje del stick (-1..1) a velocidad RC del Tello (-60..60) aplicando
+# zona muerta + curva expo + tope de velocidad, para que el manejo sea suave.
 def _axis_to_rc(v):
-    """Convierte un eje del stick (-1..1) a velocidad RC (-60..60) con zona
-    muerta + curva expo + tope de velocidad, para un control suave."""
     if abs(v) < MANUAL_DEADZONE:
         return 0
     sign = 1 if v >= 0 else -1
@@ -285,6 +312,9 @@ def _axis_to_rc(v):
     return max(-limit, min(limit, rc))
 
 
+# Recibe la posicion del joystick (JSON con 2 sticks) que llega por el DataChannel
+# y la traduce a comandos RC: rc() para el Tello, send_rc() (PWM) para ArduPilot.
+# Ignora el joystick si hay un modo autonomo activo (follow/orbit/panorama).
 def handle_joystick(data_str):
     global _orbit_active
     try:
@@ -323,6 +353,11 @@ def handle_joystick(data_str):
     except Exception as e:
         print('Error joystick')
 
+# ENRUTADOR DE COMANDOS: es el corazon de la ET. Cada mensaje MQTT del frontend
+# entra aqui; el 3er segmento del topic es el comando y el payload sus parametros.
+# Debajo hay un bloque 'if command == ...' por cada accion posible (conectar,
+# despegar, aterrizar, modos autonomos, mision...). Casi todo lo que tarda se lanza
+# en un hilo aparte para no bloquear la recepcion de los siguientes comandos.
 def on_message(client, userdata, message):
     global _pc, _camera_track, flight_mode, camera_index, _follow_mode, tello, _follow_ctrl
     global _orbit_active, _orbit_thread, _panorama_ctrl, _panorama_active
@@ -331,6 +366,7 @@ def on_message(client, userdata, message):
     command = parts[2] if len(parts) > 2 else "PARTS ERROR"
     print(f'Comando recibido: {command}, payload = {message.payload.decode()}')
 
+    # Elige el tipo de vehiculo: 'ardupilot' (real), 'sitl' (simulador) o 'tello'
     if command == 'setMode':
         mode = message.payload.decode().strip()
         if mode in ('ardupilot', 'sitl', 'tello'):
@@ -341,6 +377,7 @@ def on_message(client, userdata, message):
         else:
             print(f'[WARN] Modo desconocido: {mode}')
 
+    # Cambia entre camara 0 y 1 (webcam / capturadora), en caliente si ya hay stream
     if command == 'setCamera':
         try:
             idx = int(message.payload.decode().strip())
@@ -354,6 +391,15 @@ def on_message(client, userdata, message):
         except ValueError:
             print('[WARN] setCamera: valor no numerico')
 
+    # Conecta con el dron y abre el stream WebRTC. Segun flight_mode conecta con el
+    # Tello o con ArduPilot/SITL; si ya habia sesion, la recupera sin reconectar.
+    # Conecta con el vehiculo. Es el comando mas largo porque tiene dos ramas muy
+    # distintas (Tello o ArduPilot/SITL) y ademas contempla la RECUPERACION DE
+    # SESION: si el dron ya estaba conectado (p.ej. el usuario recargo la pagina
+    # con el dron volando), no se reconecta desde cero, solo se rehace el canal
+    # WebRTC y se le cuenta al frontend en que estado esta el dron.
+    # Todo va en un hilo aparte: conectar bloquea varios segundos y mientras tanto
+    # la ET debe seguir escuchando mensajes.
     if command == 'connect':
         def conectar():
             global _pc, _camera_track, telemetry_channel
@@ -370,25 +416,37 @@ def on_message(client, userdata, message):
                     threading.Thread(target=process_tello_telemetry, daemon=True).start()
                 else:
                     print(f'[TELLO] Recuperacion de sesion - estado: "{tello.state}"')
+                # Cierra la sesion WebRTC anterior si la habia: al reconectar hay
+                # que renegociar de cero, no se puede reutilizar la vieja.
                 if _pc is not None:
                     fut = asyncio.run_coroutine_threadsafe(_pc.close(), loop)
                     fut.result(timeout=3)
                     _pc = None; _camera_track = None; telemetry_channel = None
                 client.publish('groundStation/mobileFlutter/connected', 'connected')
+                # Pausa corta para que Flutter procese el 'connected' antes de
+                # recibir el 'flying' (el orden importa para la maquina de estados).
                 time.sleep(0.3)
                 if tello.state == 'flying':
                     client.publish('groundStation/mobileFlutter/flying', 'flying')
                 asyncio.run_coroutine_threadsafe(webrtc_client(), loop)
                 return
 
+            # Rama ArduPilot/SITL: puerto serie (COM3, dron real) o TCP local (SITL).
+            # Aqui esta EL sitio que hay que tocar para volar con un dron real en
+            # otra maquina o con otro puerto.
             conn_str = 'com3' if flight_mode == 'ardupilot' else 'tcp:127.0.0.1:5763'
             baud = 57600 if flight_mode == 'ardupilot' else 115200
             already = dron.state in ('connected', 'armed', 'flying', 'returning')
+            # Si habia sesion pero apuntando a OTRO destino (se cambio de dron real
+            # a simulador o al reves), no vale: se cierra y se conecta de nuevo.
             if already and hasattr(dron, '_conn_str') and dron._conn_str != conn_str:
                 already = False
                 try: dron.stop_sending_telemetry_info(); dron.disconnect()
                 except Exception: pass
             if not already:
+                # Conexion nueva: se conecta, se comprueba que dronLink haya creado
+                # el vehiculo y se arranca la telemetria a 10 Hz, pasandole la
+                # funcion que la publicara hacia el frontend.
                 try:
                     dron.connect(conn_str, baud, freq=10); dron._conn_str = conn_str
                     if dron.vehicle is None: raise Exception('Vehicle is None')
@@ -399,6 +457,10 @@ def on_message(client, userdata, message):
                     client.publish('groundStation/mobileFlutter/disconnected', 'connection_failed')
                     return
             else:
+                # Recuperacion de sesion: el dron sigue conectado (y quiza volando).
+                # No se toca el vehiculo; solo se tira todo lo del navegador
+                # anterior (WebSocket de senalizacion, PeerConnection y telemetria)
+                # y se vuelve a montar para el navegador nuevo.
                 if _ws is not None:
                     try:
                         fut = asyncio.run_coroutine_threadsafe(_ws.close(), loop)
@@ -411,6 +473,9 @@ def on_message(client, userdata, message):
                 try: dron.stop_sending_telemetry_info()
                 except Exception: pass
                 dron.send_telemetry_info(process_telemetry_info)
+            # Se le cuenta al frontend el estado REAL del dron, en orden: primero
+            # conectado, luego armado y por ultimo volando. Asi la app se pone al
+            # dia aunque se haya abierto con el dron ya en el aire.
             client.publish('groundStation/mobileFlutter/connected', 'connected')
             time.sleep(0.3)
             if dron.state in ('armed', 'flying', 'returning'):
@@ -418,9 +483,11 @@ def on_message(client, userdata, message):
             if dron.state in ('flying', 'returning'):
                 time.sleep(0.1)
                 client.publish('groundStation/mobileFlutter/flying', 'flying')
+            # Y por ultimo se lanza la negociacion WebRTC (video + joystick)
             asyncio.run_coroutine_threadsafe(webrtc_client(), loop)
         threading.Thread(target=conectar).start()
 
+    # Arma los motores (solo ArduPilot; el Tello arma al despegar)
     if command == 'arm':
         if flight_mode == 'tello': return
         if dron.state == 'connected':
@@ -430,6 +497,8 @@ def on_message(client, userdata, message):
             threading.Thread(target=monitor_arm_state, daemon=True).start()
             threading.Thread(target=armar).start()
 
+    # Despega. Tello: takeOff directo. ArduPilot: recibe altitud[:velocidad] en el
+    # payload, sube y pasa a modo LOITER para quedarse quieto esperando ordenes.
     if command == 'takeoff':
         if flight_mode == 'tello':
             if tello is None: return
@@ -453,6 +522,8 @@ def on_message(client, userdata, message):
                 client.publish('groundStation/mobileFlutter/flying', 'flying')
             threading.Thread(target=despegar).start()
 
+    # Aterriza. Antes corta cualquier modo autonomo (follow/orbit/panorama) que
+    # siguiera mandando RC y mantendria el dron en el aire.
     if command == 'land':
         if flight_mode == 'tello':
             if tello is None: return
@@ -498,6 +569,7 @@ def on_message(client, userdata, message):
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
             threading.Thread(target=aterrizar).start()
 
+    # Return To Launch: vuelve al punto de despegue y aterriza (solo ArduPilot)
     if command == 'rtl':
         if flight_mode == 'tello': return
         if dron.state in ('flying', 'returning'):
@@ -506,6 +578,7 @@ def on_message(client, userdata, message):
                 client.publish('groundStation/mobileFlutter/landed', 'landed')
             threading.Thread(target=rtl).start()
 
+    # Ajusta la velocidad de navegacion en vuelo (m/s, solo ArduPilot)
     if command == 'speed':
         if flight_mode == 'tello': return
         try:
@@ -516,6 +589,7 @@ def on_message(client, userdata, message):
         dron.navSpeed = spd
         if dron.vehicle: dron.changeNavSpeed(spd)
 
+    # Zoom digital de la camara (1x..10x); se aplica al recortar cada frame
     if command == 'zoom':
         try:
             zoom_val = max(1.0, min(float(message.payload.decode()), 10.0))
@@ -523,6 +597,8 @@ def on_message(client, userdata, message):
         except ValueError:
             print('[WARN] Zoom: valor invalido')
 
+    # Voltereta acrobatica del Tello. Se bloquea si la bateria esta baja (<50%),
+    # que es cuando el firmware la rechaza.
     if command == 'flip':
         if flight_mode == 'tello' and tello and tello.state == 'flying':
             d = message.payload.decode().strip()
@@ -545,6 +621,9 @@ def on_message(client, userdata, message):
                         client.publish('groundStation/mobileFlutter/flipStatus',
                                        'Flip rechazado por el dron')
 
+    # Modo ORBITA (Tello): el dron gira alrededor de la persona detectada. El radio
+    # es automatico (distancia actual). Delega en FollowController.activate_orbit;
+    # payload 'stop' lo apaga, 'cw'/'ccw' elige el sentido de giro.
     if command == 'orbit':
         if flight_mode == 'tello' and tello and tello.state == 'flying':
             payload_str = message.payload.decode().strip()
@@ -600,6 +679,8 @@ def on_message(client, userdata, message):
             print('[ORBIT] Rechazado — Tello no conectado o no volando')
             client.publish('groundStation/mobileFlutter/orbitStatus', 'off')
 
+    # Modo FOLLOW (Tello): el dron sigue de forma autonoma a la persona detectada.
+    # payload 'true' lo activa (crea un FollowController fresco), 'false' lo apaga.
     if command == 'followMode':
         if flight_mode == 'tello' and tello is not None:
             new_state = message.payload.decode().strip() == 'true'
@@ -645,6 +726,9 @@ def on_message(client, userdata, message):
                 print('[TELLO] Follow mode DESACTIVADO')
                 client.publish('groundStation/mobileFlutter/followModeStatus', 'off')
 
+    # Modo PANORAMA 360 (Tello): gira sobre si mismo sacando fotos y las cose en una
+    # panoramica (ver panorama_controller.py). Incompatible con follow/orbit, que se
+    # paran antes. payload 'stop' cancela el escaneo.
     if command == 'panorama360':
         if flight_mode == 'tello' and tello and tello.state == 'flying':
             payload_str = message.payload.decode().strip()
@@ -698,12 +782,15 @@ def on_message(client, userdata, message):
             print('[PANORAMA] Rechazado — Tello no conectado o no volando')
             client.publish('groundStation/mobileFlutter/panoramaStatus', 'off')
 
+    # Elige que dibuja YOLO sobre el video: 'all', solo 'person' o 'none'
     if command == 'detectionMode':
         mode = message.payload.decode()
         if _camera_track:
             _camera_track.detection_mode = mode
             _camera_track.detecciones = []
 
+    # Desconexion limpia: para modos autonomos, cierra el stream/WebRTC, desconecta
+    # el vehiculo y avisa a Flutter con 'disconnected'.
     if command == 'disconnect':
         if flight_mode == 'tello':
             if tello is None: return
@@ -753,6 +840,8 @@ def on_message(client, userdata, message):
             _pc = None; _camera_track = None
         threading.Thread(target=desconectar).start()
 
+    # Recibe un plan de vuelo (waypoints + accion en cada uno) y lo guarda en memoria
+    # convertido al formato de dronLink; no despega todavia, solo lo deja preparado.
     if command == 'uploadMission':
         global _pending_mission, _pending_actions
         try:
@@ -774,6 +863,9 @@ def on_message(client, userdata, message):
         except Exception as e:
             client.publish('groundStation/mobileFlutter/missionUploaded', f'error:{e}')
 
+    # Ejecuta el plan ya subido: arma, despega y recorre los waypoints uno a uno,
+    # haciendo en cada uno su accion (hover, foto, video, rtl/land) y avisando del
+    # progreso a Flutter. Al terminar vuelve con RTL.
     if command == 'startMission':
         if _pending_mission is None:
             client.publish('groundStation/mobileFlutter/missionStarted', 'error')
@@ -817,7 +909,10 @@ def on_message(client, userdata, message):
 # WEBRTC - Video Track
 # ============================================================
 
+# Pista de video que WebRTC envia al frontend. En cada frame captura de la camara
+# (o del Tello), corrige lente, aplica zoom, pinta las detecciones YOLO y lo entrega.
 class CameraVideoTrack(VideoStreamTrack):
+    # Prepara la fuente de video: stream del Tello o webcam segun el modo de vuelo
     def __init__(self, cam_idx=1):
         super().__init__()
         self.zoom_factor = 1.0
@@ -834,6 +929,7 @@ class CameraVideoTrack(VideoStreamTrack):
         else:
             self.set_camera(cam_idx)
 
+    # Abre (o reabre) la camara por su indice con OpenCV
     def set_camera(self, idx):
         if self.cap is not None:
             self.cap.release()
@@ -842,6 +938,7 @@ class CameraVideoTrack(VideoStreamTrack):
         if not self.cap.isOpened():
             print(f'[ERROR] No se pudo abrir la camara {idx}')
 
+    # Corrige la distorsion de la lente con los datos de calibracion (ojo de pez)
     def _undistort(self, frame):
         if not self.correct_lens:
             return frame
@@ -851,6 +948,7 @@ class CameraVideoTrack(VideoStreamTrack):
             u = u[y:y+h, x:x+w]
         return u
 
+    # Zoom digital: recorta el centro segun zoom_factor y lo reescala al tamano original
     def _apply_zoom(self, frame):
         if self.zoom_factor <= 1.0:
             return frame
@@ -923,6 +1021,7 @@ class CameraVideoTrack(VideoStreamTrack):
         frame = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         return frame
 
+    # Lo llama aiortc cuando necesita el siguiente frame para enviar por WebRTC
     async def recv(self):
         self.frame_count += 1
         # El cómputo pesado (captura + YOLO) va a un hilo para liberar el event
@@ -940,6 +1039,9 @@ class CameraVideoTrack(VideoStreamTrack):
 # WEBRTC - señalización
 # ============================================================
 
+# Negociacion WebRTC con el frontend a traves del servidor de senalizacion (WSS):
+# intercambia offer/answer y candidatos ICE, crea los DataChannels de joystick y
+# telemetria y engancha la pista de video. Es el "handshake" que abre la conexion.
 async def webrtc_client():
     global _pc, telemetry_channel, _camera_track, _webrtc_running, _ws
 
@@ -1042,6 +1144,7 @@ async def webrtc_client():
 # ARRANQUE
 # ============================================================
 
+# Instancia los dos vehiculos posibles (se usara uno u otro segun flight_mode)
 dron = Dron()
 dron.navSpeed = 3.0
 dron._conn_str = None
@@ -1058,4 +1161,6 @@ client.connect(BROKER, PORT_MQTT)
 client.loop_start()
 
 print('Sistema listo. Esperando comandos MQTT...')
+# Bloquea el hilo principal para siempre: todo el trabajo real ocurre en los
+# callbacks MQTT y en los hilos de video/telemetria/asyncio.
 threading.Event().wait()

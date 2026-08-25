@@ -11,8 +11,16 @@ import '../core/styles.dart';
 import '../core/js_bridges.dart';
 import 'flight_plan_screen.dart';
 
-// Pantalla de historial de vuelos.
-// Muestra las sesiones grabadas con mapa, estadísticas y opción de descarga CSV.
+// ─────────────────────────────────────────────────────────────────────────────
+// FlightLogScreen — todo lo que la app guarda entre sesiones, en tres pestañas:
+//   LOGS    — vuelos grabados: recorrido en el mapa, estadísticas y export a CSV.
+//   PLANS   — planes de vuelo guardados, para reabrirlos en el planificador.
+//   GALLERY — fotos, vídeos y panorámicas capturadas.
+//
+// Nada de esto habla con el dron: se lee todo del provider, que a su vez lo saca
+// del almacenamiento del navegador (metadatos en localStorage y los archivos
+// pesados en IndexedDB).
+// ─────────────────────────────────────────────────────────────────────────────
 class FlightLogScreen extends StatefulWidget {
   const FlightLogScreen({super.key});
 
@@ -1376,6 +1384,8 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   @override
   void initState() {
     super.initState();
+    // Arranca con el slider al final: al abrir el detalle se ve el recorrido
+    // completo, y desde ahí el usuario puede retroceder para "rebobinar".
     _playIndex = (widget.session.trail.length - 1).clamp(
       0,
       double.maxFinite.toInt(),
@@ -1389,6 +1399,9 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     super.dispose();
   }
 
+  // Encuadra el mapa para que se vea el recorrido entero: se busca el rectángulo
+  // que contiene todos los puntos (esquinas suroeste y noreste) y se le pide al
+  // mapa que se ajuste a él, con un margen para que no toque los bordes.
   void _fitTrail() {
     final trail = widget.session.trail;
     if (trail.isEmpty) return;
@@ -1412,6 +1425,9 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     } catch (_) {}
   }
 
+  // Convierte el log del vuelo a CSV: una línea de cabecera con los nombres de
+  // columna y una línea por cada muestra de telemetría. Es texto plano, así que
+  // se abre directamente en Excel o en cualquier herramienta de análisis.
   String _buildCSV() {
     final sb = StringBuffer();
     sb.writeln('timestamp,lat,lon,alt_m,speed_ms,bat_pct,heading_deg');
@@ -1436,6 +1452,11 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
       .expand((e) => e)
       .toList();
 
+  // La descarga la hace JavaScript (downloadCSVEZ, en web/index.html): Flutter
+  // Web no puede escribir en el disco, así que se genera un fichero en memoria y
+  // se simula un clic en un enlace de descarga.
+  // Los ':' de la hora se sustituyen por '-' porque hay sistemas de ficheros que
+  // no los admiten en un nombre.
   void _downloadCSV() {
     final csv = _buildCSV();
     final dateStr = widget.session.startTime

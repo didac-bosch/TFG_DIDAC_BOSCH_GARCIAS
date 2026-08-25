@@ -11,6 +11,23 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:geolocator/geolocator.dart';
 import 'dart:math';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// provider.dart — el cerebro del frontend de EZDrone.
+//
+// Aquí vive TODO el estado de la aplicación y desde aquí salen los dos canales
+// de comunicación:
+//   - MqttLogic  - comandos discretos (connect, takeoff, orbit...) y las
+//                  confirmaciones que llegan de la estación de tierra.
+//   - WebRTCLogic - el vídeo de la cámara, el joystick y la telemetría continua.
+//
+// Las pantallas no hablan con el dron: le piden cosas a este objeto, y él avisa
+// (notifyListeners) para que se repinten con los datos nuevos.
+//
+// El fichero tiene dos mitades: primero los modelos de datos que se guardan en
+// el navegador (galería, registro de vuelos, planes de vuelo) y después la clase
+// DronProvider con el estado y los comandos.
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Llamada a funciones JavaScript declaradas en el index.html relacionadas con la captura de pantalla
 @JS('captureDroneFrame')
 external void _jsCapture(String id, String filename);
@@ -40,18 +57,28 @@ external void _jsPutMediaBytes(
 @JS('openPanoramaViewer')
 external void openPanoramaViewer(String id);
 
-// Modos de control
+// Modos de control — CÓMO se pilota. Solo afecta al frontend: decide a qué
+// pantalla de vuelo se navega.
 enum ControlMode { classic, voice, imu }
 
-// Modos de detección YOLO — sincronizados con ET via MQTT
+// Modos de detección YOLO — sincronizados con ET via MQTT.
+// Quien dibuja las detecciones sobre el vídeo es la estación de tierra; esto
+// solo le dice qué quiere ver el usuario.
 enum DetectionMode { all, person, none }
 
-// Modos de conexión al dron
+// Modos de conexión al dron — QUÉ vehículo. Esto sí sale de la app: viaja por
+// MQTT y determina si la estación de tierra usará dronLink o TelloLink.
 enum DroneConnectionMode { ardupilot, sitl, tello }
 
 // ------ GALERÍA -------------------
 // Metadata de una captura (foto o vídeo). El contenido real (blob) vive en
 // IndexedDB; aquí solo se persiste la metadata en localStorage.
+//
+// Los cuatro modelos que vienen a continuación (MediaItem, TelemetrySnapshot,
+// FlightSession y los del plan de vuelo) repiten el mismo patrón: campos final
+// (inmutables), un toJson para guardarlos en el navegador y un fromJson para
+// reconstruirlos al arrancar. El almacenamiento del navegador solo guarda texto,
+// así que todo tiene que poder convertirse a JSON y volver.
 class MediaItem {
   final String id; // = millisecondsSinceEpoch como String
   final String type; // 'photo' | 'video' | 'panorama'
@@ -229,6 +256,8 @@ class FlightSession {
 
 // ─── FLIGHT PLAN MODELS ───────────────────────────────────────────────────────
 
+// Qué hace el dron al llegar a un waypoint. 'seconds' solo se usa en hover y
+// recordVideo (cuánto tiempo se queda quieto o cuánto graba).
 enum WaypointActionType { none, hover, takePhoto, recordVideo, rtl, land }
 
 class WaypointAction {
@@ -240,6 +269,10 @@ class WaypointAction {
     this.seconds = 5.0,
   });
 
+  // Los campos son final: un waypoint no se modifica, se sustituye por otro con
+  // los cambios aplicados. copyWith crea esa copia cambiando solo lo que se le
+  // pase. Es lo que permite que Flutter detecte el cambio (objeto distinto) y
+  // que no se pisen datos por accidente al editar la lista.
   WaypointAction copyWith({WaypointActionType? type, double? seconds}) =>
       WaypointAction(type: type ?? this.type, seconds: seconds ?? this.seconds);
 
@@ -271,6 +304,7 @@ class WaypointAction {
   );
 }
 
+// Un punto del plan: dónde ir, a qué altura y qué hacer al llegar
 class FlightWaypoint {
   final double lat;
   final double lon;
@@ -1189,7 +1223,7 @@ class DronProvider extends ChangeNotifier {
     isFollowMode = !isFollowMode;
     if (isFollowMode) {
       // Si había una órbita activa, cerrarla: startOrbit() limpia isFollowMode al
-      // entrar, pero la inversa no estaba implementada → la UI mostraba ambos
+      // entrar, pero la inversa no estaba implementada - la UI mostraba ambos
       // modos activos y un stopOrbit() posterior reactivaba el joystick.
       if (isOrbitMode) {
         isOrbitMode = false;
@@ -1239,13 +1273,14 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  //void sendTelloCommand(String command) {
-  //if (!isConnected || !isFlying) return;
-  //_mqtt.publish(Constants.topicTelloCommand, command);
-  //}
-
   // -----------------------HANDLER DE MENSAJES----------------------------------
+  // Todo lo que llega de la estación de tierra por MQTT entra por aquí. Es el
+  // punto donde la app se entera de lo que está pasando de verdad con el dron:
+  // los comandos de arriba solo PIDEN cosas, y son estos mensajes los que
+  // confirman (o desmienten) que hayan ocurrido.
 
+  // Caída del canal MQTT: sin él no se puede mandar ningún comando, así que se
+  // deja el estado limpio en lugar de seguir aparentando que hay control.
   void _handleMqttDisconnected() {
     if (!isConnected) return; // desconexión durante el intento de conexión — ya gestionada
     isConnected = false;
@@ -1267,12 +1302,16 @@ class DronProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // Un if por topic, no un if-else: el broker entrega los mensajes de uno en
+  // uno, así que cada llamada trae un único topic y no hay ambigüedad.
   void _handleMessage(String topic, String payload) {
 
     // --------------- TOPIC CONNECTED ---------------
     if (topic == Constants.topicConnected) {
+      // Un broker puede reenviar mensajes antiguos (retained) al suscribirse.
+      // Si no estábamos esperando esta confirmación, es viejo: se descarta.
       if (!_waitingForConnect) return; // descarta retained/stale messages
-      _connectionTimeoutTimer?.cancel(); // ← añadir
+      _connectionTimeoutTimer?.cancel();
       _connectingInProgress = false;
       _waitingForConnect = false;
       isConnected = true;
@@ -1295,6 +1334,9 @@ class DronProvider extends ChangeNotifier {
 
 
     // --------------- TOPIC DISARMED ---------------
+    // ArduPilot puede desarmar por su cuenta (tras aterrizar, por seguridad...)
+    // sin que nadie lo pida. La estación de tierra lo vigila y avisa por aquí:
+    // sin esto, la interfaz seguiría diciendo que hay motores armados.
     if (topic == Constants.topicDisarmed) {
       isArmed = false;
       isFlying = false;
@@ -1450,8 +1492,8 @@ class DronProvider extends ChangeNotifier {
     }
 
     // --------------- TOPIC PANORAMA STATUS ---------------
-    // Estado autoritativo del escaneo. 'scanning'/'stitching' → en curso;
-    // 'off'/'error' → terminado sin imagen (reactivar joystick). 'done' se
+    // Estado autoritativo del escaneo. 'scanning'/'stitching' - en curso;
+    // 'off'/'error' - terminado sin imagen (reactivar joystick). 'done' se
     // finaliza al llegar la imagen (topicPanoramaReady).
     if (topic == Constants.topicPanoramaStatus) {
       panoramaStatus = payload;

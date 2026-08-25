@@ -34,9 +34,9 @@ import 'package:flutter/material.dart';
 //   3. En otra terminal, crear el túnel HTTPS:
 //        ngrok http 8080
 //   4. Ngrok mostrará una URL del tipo:
-//        https://a1b2c3d4.ngrok.io
+//        https://a1b2c3d4.ngrok.i
 //   5. Abrir esa URL en Safari (iOS) o Chrome (Android)
-//   6. Pulsar "ACTIVAR SENSORES" → conceder permiso → mover el móvil
+//   6. Pulsar "ACTIVAR SENSORES" - conceder permiso - mover el móvil
 //
 //   NOTA: cada sesión de ngrok dura 2h sin cuenta gratuita.
 //         Al expirar, repetir pasos 3-6 con la nueva URL.
@@ -45,25 +45,29 @@ import 'package:flutter/material.dart';
 //   - Mapear pitch y roll a PWM: 1500 + valor_normalizado * 500
 //   - Enviar los valores por WebRTC DataChannel a ~20Hz
 //     (el Timer ya corre a 20Hz, solo añadir el send)
-//   - Sustituir el joystick derecho de EZDrone por este control
+//   - Sustituir el joystick de EZDrone por este control
 // ============================================================
 
 
 // Puentes JS para llamar a funciones definidas en web/index.html
+
+// Solicita permiso de acceso a los sensores (solo iOS)
 @JS('requestMotionPermission')
 external void requestMotionPermission();
 
+// Detiene la lectura de los sensores
 @JS('stopOrientation')
 external void stopOrientation();
 
+// Lee los ángulos de orientación del dispositivo
 @JS('getAlpha')
 external double getAlpha();
-
 @JS('getBeta')
 external double getBeta();
-
 @JS('getGamma')
 external double getGamma();
+
+
 
 void main() {
   runApp(const MaterialApp(
@@ -71,6 +75,7 @@ void main() {
   ));
 }
 
+// Widget principal que muestra los ángulos y el botón de activación
 class ImuDemo extends StatefulWidget {
   const ImuDemo({super.key});
   @override
@@ -98,6 +103,7 @@ class _ImuDemoState extends State<ImuDemo> {
     });
   }
 
+  // Detiene la lectura de los ángulos y resetea los valores
   void _stopListening() {
     stopOrientation();
     _timer?.cancel();
@@ -131,8 +137,9 @@ class _ImuDemoState extends State<ImuDemo> {
           children: [
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [ // tres cajas para mostrar los ángulos
-                _buildAngleBox('PITCH', _pitch, Colors.blue),
+              children: [ 
+                // tres cajas para mostrar los ángulos
+                _buildAngleBox('PITCH', _pitch, Colors.blue),   //método helper qu econstruye la caja de ángulo con su etiqueta y color
                 _buildAngleBox('ROLL',  _roll,  Colors.green),
                 _buildAngleBox('YAW',   _yaw,   Colors.orange),
               ],

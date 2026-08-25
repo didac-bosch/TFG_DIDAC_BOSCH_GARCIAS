@@ -69,7 +69,7 @@ Router buildRouter(MqttService mqtt) {
   });
 
   // POST /speed
-  router.post('/speed', (Request request) async {   //post, ppublica la velocidad
+  router.post('/speed', (Request request) async {   
     print('HTTP POST /speed received');
     final body = await request.readAsString();
     final data = jsonDecode(body);

@@ -10,9 +10,28 @@
   <title>EZDRONE</title>
 
   <script>
+    // =========================================================================
+    // Funciones JavaScript que Flutter no puede hacer por sí solo.
+    //
+    // Flutter Web corre dentro del navegador, pero hay cosas que solo se pueden
+    // pedir desde JavaScript puro: los sensores del móvil, la base de datos del
+    // navegador, grabar vídeo, descargar ficheros o poner pantalla completa.
+    // Todo eso vive aquí, y Dart las llama a través de lib/core/js_bridges.dart.
+    //
+    // Cinco bloques: sensores (IMU), galería (IndexedDB), visor 360, captura y
+    // grabación del vídeo, y utilidades varias (fullscreen, orientación, CSV).
+    // =========================================================================
+
     // ------- IMU bridge — DeviceOrientationEvent ----------
+    // El navegador fusiona acelerómetro, giróscopo y magnetómetro y entrega tres
+    // ángulos ya calculados: alpha (rumbo), beta (inclinación adelante/atrás) y
+    // gamma (inclinación lateral). Es lo que usa el modo de control por IMU.
+    // Se guardan en variables globales y Dart las lee cuando las necesita, en
+    // lugar de disparar un evento hacia Flutter en cada lectura.
     var _alpha = 0, _beta = 0, _gamma = 0;
 
+    // iOS exige pedir permiso explícito y SOLO desde un gesto del usuario (un
+    // toque); en Android y escritorio basta con suscribirse al evento.
     function requestMotionPermission() {
       if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -27,6 +46,7 @@
       }
     }
 
+    // Se dispara muchas veces por segundo: solo guarda, no calcula nada
     function handleOrientation(event) {
       _alpha = event.alpha || 0;
       _beta = event.beta || 0;
@@ -37,6 +57,8 @@
     function getBeta() { return _beta; }
     function getGamma() { return _gamma; }
 
+    // Al salir del modo IMU hay que desuscribirse, o el sensor sigue gastando
+    // batería en segundo plano.
     function stopOrientation() {
       window.removeEventListener('deviceorientation', handleOrientation);
     }
@@ -45,6 +67,15 @@
     // ------------ Galería — almacenamiento en IndexedDB ---------------
     // Cada registro: {id, type:'photo'|'video', mime, filename, timestamp, blob}
     // Los object URLs se cachean en window._ezMediaUrls para acceso síncrono.
+    //
+    // Por qué IndexedDB y no localStorage: localStorage solo guarda texto y ronda
+    // los 5 MB. Un vídeo no cabe. IndexedDB sí admite ficheros binarios (Blob) y
+    // tiene mucho más espacio. Por eso el reparto es: los ficheros pesados aquí,
+    // y la ficha de cada uno (fecha, GPS, nombre) en localStorage vía el provider.
+    //
+    // Un object URL es una dirección temporal tipo "blob:..." que apunta a un
+    // fichero en memoria. NO sobrevive al recargar la página: por eso al arrancar
+    // hay que recrearlos todos (ezInitMediaStore).
     window._ezMediaUrls = {};
     const _EZ_DB = 'ezdrone_media', _EZ_STORE = 'media';
 
@@ -190,6 +221,9 @@
     };
 
     // ------------ Captura y grabación del stream WebRTC ---------------
+    // La foto se hace copiando el fotograma actual del <video> a un lienzo
+    // (canvas) y exportándolo como PNG. El vídeo se graba con MediaRecorder, que
+    // va entregando el resultado a trozos ("chunks") que se juntan al parar.
     let _droneRecorder = null;
     let _droneChunks = [];
 

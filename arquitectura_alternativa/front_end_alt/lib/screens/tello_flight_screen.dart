@@ -7,9 +7,27 @@ import '../provider.dart';
 import '../core/styles.dart';
 import '../core/js_bridges.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// TelloFlightScreen — pantalla de vuelo del DJI Tello.
+//
+// A diferencia de FlightScreen, aquí el vídeo NO es opcional: ocupa el fondo
+// entero y todo lo demás flota encima (HUD, joysticks y paneles). Es la pantalla
+// que da acceso a los modos autónomos, que se ejecutan enteros en la estación de
+// tierra: flip, follow (seguir a una persona), orbit (girar a su alrededor) y
+// panorama 360.
+//
+// Punto clave: la estación de tierra es la autoridad sobre esos modos. Esta
+// pantalla los pide por MQTT, pero quien dice si están activos o no son las
+// confirmaciones que llegan de vuelta (followModeStatus, orbitStatus,
+// panoramaStatus). De ahí la lógica de _reconcileMode.
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Puente a JavaScript: registra el <video> del stream para poder sacar fotos y
+// grabar desde el navegador (las funciones viven en web/index.html).
 @JS('setDroneStreamRef')
 external void _jsSetDroneStreamRef();
 
+// Qué panel de modo está abierto. Solo uno a la vez: los modos son excluyentes.
 enum _TelloMode { none, flip, follow, orbit, panorama }
 
 class TelloFlightScreen extends StatefulWidget {
@@ -68,6 +86,8 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
     _prevPanorama = p.isPanoramaMode;
   }
 
+  // Abre el panel de un modo, o lo cierra si ya estaba abierto. Al ser una sola
+  // variable, abrir uno cierra automáticamente el anterior.
   void _toggleMode(_TelloMode mode) {
     setState(() {
       _activeMode = _activeMode == mode ? _TelloMode.none : mode;
@@ -77,6 +97,8 @@ class _TelloFlightScreenState extends State<TelloFlightScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
+    // En cada repintado se comprueba si la estación de tierra ha cancelado algún
+    // modo por su cuenta, para cerrar el panel correspondiente.
     _reconcileMode(provider);
     final screenW = MediaQuery.of(context).size.width;
     final screenH = MediaQuery.of(context).size.height;

@@ -55,8 +55,8 @@ import 'package:web/web.dart' as web;
 //   El JSON que sale de aquí es exactamente el formato que EZDrone
 //   publica por MQTT en el topic:
 //     mobileFlutter/groundStation/mission
-//   La estación de tierra (estacion_tierra.py) lo recibe, lo carga en
-//   ArduPilot con DroneKit y va ejecutando los waypoints en orden.
+//   La estación de tierra lo recibe, lo carga en
+//   ArduPilot y va ejecutando los waypoints en orden.
 // ============================================================
 
 // -------- MODELOS -----------------------------------------------------------------
@@ -65,15 +65,15 @@ import 'package:web/web.dart' as web;
 enum WaypointActionType { none, hover, takePhoto, recordVideo, rtl, land }
 
 // Acción que ejecuta el dron al llegar a un waypoint: el tipo + su duración
-// (los segundos solo se usan en hover y record)
 class WaypointAction {
   final WaypointActionType type;
   final double seconds;
   const WaypointAction({
     this.type = WaypointActionType.none,
-    this.seconds = 3.0,
+    this.seconds = 5.0,
   });
 
+  // Crea una copia de la acción cambiando solo los campos que se pasen
   WaypointAction copyWith({WaypointActionType? type, double? seconds}) =>
       WaypointAction(type: type ?? this.type, seconds: seconds ?? this.seconds);
 
@@ -120,6 +120,7 @@ class FlightWaypoint {
         action: action ?? this.action,
       );
 
+  // Vuelca el waypoint a JSON: lat, lon, altitud y la acción
   Map<String, dynamic> toJson() => {
     'lat': lat,
     'lon': lon,
@@ -132,7 +133,7 @@ class FlightWaypoint {
 
 // Paleta de colores de la app (mismos tonos oscuros que EZDrone)
 class C {
-  static const bg = Color(0xFF1E1E2E);
+  static const background = Color(0xFF1E1E2E);
   static const surface = Color(0xFF2A2A3E);
   static const primary = Color(0xFF4F98A3);
   static const danger = Color(0xFFE05C5C);
@@ -144,11 +145,10 @@ class C {
 
   // ----------  MAIN  -------------------------------------------------------
 
-// Punto de entrada: monta la app sin la cinta de debug
+// Punto de entrada
 void main() {
   runApp(
     const MaterialApp(
-      debugShowCheckedModeBanner: false,
       home: FlightPlanDemo(),
     ),
   );
@@ -167,7 +167,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
   final MapController _mapController = MapController(); // controla el mapa (mover/zoom)
   List<FlightWaypoint> _waypoints = [];                 // waypoints del plan, en orden
 
-  // Punto donde arranca el mapa si aún no hay waypoints: el campus de la EETAC
+  // si no hay ningun waypoint, el mapa se centra en la EETAC 
   static const LatLng _defaultCenter = LatLng(41.2765, 1.9888);
 
   // Al cerrar la pantalla se libera el controlador del mapa
@@ -184,7 +184,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
     setState(() {
       _waypoints = [
         ..._waypoints,
-        FlightWaypoint(lat: point.latitude, lon: point.longitude),
+        FlightWaypoint(lat: point.latitude, lon: point.longitude),  // lat y lon del toque, altitud por defecto 10 m y acción por defecto none
       ];
     });
   }
@@ -197,7 +197,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
   // Recoloca un waypoint después de arrastrarlo a otra posición
   void _reorderWaypoints(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex--;
-    setState(() {
+    setState(() {                                                 // setState para que se repinte la lista de waypoints
       final list = List<FlightWaypoint>.from(_waypoints);
       final item = list.removeAt(oldIndex);
       list.insert(newIndex, item);
@@ -424,7 +424,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                     decimal: true,
                   ),
                   style: const TextStyle(color: C.text),
-                  decoration: _inputDec(suffix: 'm'),
+                  decoration: _inputDec(suffix: 'm'),       // decoración común de los TextField 
                 ),
                 const SizedBox(height: 14),
                 const Text(
@@ -438,9 +438,9 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                   children: WaypointActionType.values.map((type) {
                     final sel = currentAction.type == type;
                     return GestureDetector(
-                      onTap: () => setDS(
+                      onTap: () => setDS(                             // onTap: () => setDS( para repintar solo el diálogo, no toda la pantalla
                         () =>
-                            currentAction = currentAction.copyWith(type: type),
+                            currentAction = currentAction.copyWith(type: type), // cambia la acción elegida, manteniendo los segundos
                       ),
                       child: Container(
                         padding: const EdgeInsets.symmetric(
@@ -448,7 +448,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                           vertical: 6,
                         ),
                         decoration: BoxDecoration(
-                          color: sel ? C.primary.withValues(alpha: 0.2) : C.bg,
+                          color: sel ? C.primary.withValues(alpha: 0.2) : C.background,
                           borderRadius: BorderRadius.circular(8),
                           border: Border.all(
                             color: sel ? C.primary : C.disabled,
@@ -466,7 +466,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                         ),
                       ),
                     );
-                  }).toList(),
+                  }).toList(),     
                 ),
                 if (currentAction.type == WaypointActionType.hover ||
                     currentAction.type == WaypointActionType.recordVideo) ...[
@@ -488,11 +488,11 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(ctx),
+              onPressed: () => Navigator.pop(ctx),                                        // cierra el diálogo sin guardar cambios
               child: const Text('Cancel', style: TextStyle(color: C.textMuted)),
             ),
             TextButton(
-              onPressed: () {
+              onPressed: () {                                                                       // guarda los cambios: altitud y acción (con segundos si aplica)
                 final newAlt =
                     double.tryParse(altCtrl.text.replaceAll(',', '.')) ??
                     wp.altM;
@@ -506,7 +506,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                   );
                   _waypoints = list;
                 });
-                Navigator.pop(ctx);
+                Navigator.pop(ctx);     // cierra el diálogo tras guardar los cambios
               },
               child: const Text(
                 'Save',
@@ -522,7 +522,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
   // Decoración común de los TextField del diálogo (altitud y duración)
   InputDecoration _inputDec({String? suffix}) => InputDecoration(
     filled: true,
-    fillColor: C.bg,
+    fillColor: C.background,
     border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
     enabledBorder: OutlineInputBorder(
       borderRadius: BorderRadius.circular(8),
@@ -539,12 +539,10 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
 
   // ------ BUILD -------------------------------------------
 
-  // Monta la pantalla: barra superior, mapa arriba, lista de waypoints en
-  // medio y el botón de descarga abajo
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: C.bg,
+      backgroundColor: C.background,
       appBar: AppBar(
         backgroundColor: C.surface,
         foregroundColor: C.text,
@@ -576,12 +574,14 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
             ],
           ],
         ),
+
+        // Botón de borrar todos los waypoints (solo aparece si hay alguno)
         actions: [
           if (_waypoints.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.delete_sweep, color: C.danger),
               tooltip: 'Clear all',
-              onPressed: () => showDialog(
+              onPressed: () => showDialog(  //abre un diálogo de confirmación antes de borrar todos los waypoints
                 context: context,
                 builder: (_) => AlertDialog(
                   backgroundColor: C.surface,
@@ -590,8 +590,9 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                     style: TextStyle(color: C.text),
                   ),
                   actions: [
+                    // Dos botones: Cancelar y Borrar
                     TextButton(
-                      onPressed: () => Navigator.pop(context),
+                      onPressed: () => Navigator.pop(context),    // cierra el diálogo sin borrar nada
                       child: const Text(
                         'Cancel',
                         style: TextStyle(color: C.textMuted),
@@ -599,8 +600,8 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                     ),
                     TextButton(
                       onPressed: () {
-                        setState(() => _waypoints = []);
-                        Navigator.pop(context);
+                        setState(() => _waypoints = []);    // vacía la lista de waypoints
+                        Navigator.pop(context);           // cierra el diálogo
                       },
                       child: const Text(
                         'Clear',
@@ -616,7 +617,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
       ),
       body: Column(
         children: [
-          // Mapa satelital (ocupa la mitad de arriba)
+          // Mapa satelital 
           Expanded(
             flex: 5,
             child: Stack(
@@ -626,7 +627,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                   options: MapOptions(
                     initialCenter: _mapCenter,
                     initialZoom: 17,
-                    onTap: _onMapTap,
+                    onTap: _onMapTap,   // llama al método que añade un waypoint al tocar el mapa
                   ),
                   children: [
                     TileLayer(
@@ -634,6 +635,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                           'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
                       userAgentPackageName: 'com.example.flight_plan_demo',
                     ),
+
                     // Línea que une los waypoints en orden (la ruta)
                     if (_waypoints.length >= 2)
                       PolylineLayer(
@@ -647,6 +649,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                           ),
                         ],
                       ),
+
                     // Marcadores numerados (verde el primero, rojo el último)
                     MarkerLayer(
                       markers: [
@@ -656,7 +659,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                             width: 32,
                             height: 32,
                             child: GestureDetector(
-                              onTap: () => _editWaypoint(i),
+                              onTap: () => _editWaypoint(i),  // al tocar un marcador se abre el diálogo de edición del waypoint
                               child: Container(
                                 decoration: BoxDecoration(
                                   shape: BoxShape.circle,
@@ -672,7 +675,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                                 ),
                                 child: Center(
                                   child: Text(
-                                    '${i + 1}',
+                                    '${i + 1}',   // número del waypoint
                                     style: TextStyle(
                                       color:
                                           (i == 0 || i == _waypoints.length - 1)
@@ -690,6 +693,8 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                     ),
                   ],
                 ),
+
+
                 // Pista flotante mientras el plan está vacío
                 if (_waypoints.isEmpty)
                   Positioned(
@@ -713,6 +718,8 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                       ),
                     ),
                   ),
+
+
                 // Recuadro con el resumen (nº de waypoints + distancia total)
                 if (_waypoints.length >= 2)
                   Positioned(
@@ -741,35 +748,36 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
             ),
           ),
 
-          // Lista de waypoints, reordenable arrastrando (mitad de abajo)
+
+          // Lista de waypoints, reordenable arrastrando 
           Expanded(
             flex: 4,
             child: _waypoints.isEmpty
                 ? const Center(
                     child: Text(
-                      'No waypoints yet',
+                      'No waypoints yet',   // mensaje cuando no hay waypoints
                       style: TextStyle(color: C.textMuted, fontSize: 13),
                     ),
                   )
-                : ReorderableListView.builder(
+                : ReorderableListView.builder(  
                     padding: const EdgeInsets.only(top: 4, bottom: 4),
                     itemCount: _waypoints.length,
-                    onReorder: _reorderWaypoints,
+                    onReorder: _reorderWaypoints,   // llama al método que reordena los waypoints en la lista 
                     buildDefaultDragHandles: false,
                     itemBuilder: (ctx, i) {
                       final wp = _waypoints[i];
                       return _WaypointRow(
-                        key: ValueKey('${wp.lat}${wp.lon}$i'),
+                        key: ValueKey('${wp.lat}${wp.lon}$i'),  // clave única para cada fila de la lista
                         index: i,
                         waypoint: wp,
                         actionColor: _actionColor(wp.action.type),
                         onTap: () {
                           _editWaypoint(i);
                           try {
-                            _mapController.move(LatLng(wp.lat, wp.lon), 17);
+                            _mapController.move(LatLng(wp.lat, wp.lon), 17);  // centra el mapa en el waypoint al abrir el diálogo de edición
                           } catch (_) {}
                         },
-                        onDelete: () => _removeWaypoint(i),
+                        onDelete: () => _removeWaypoint(i), // llama al método que borra el waypoint de la lista
                       );
                     },
                   ),
@@ -797,7 +805,7 @@ class _FlightPlanDemoState extends State<FlightPlanDemo> {
                     borderRadius: BorderRadius.circular(10),
                   ),
                 ),
-                onPressed: _waypoints.isNotEmpty ? _downloadJson : null,
+                onPressed: _waypoints.isNotEmpty ? _downloadJson : null,  // llama al método que descarga el JSON del plan de vuelo
               ),
             ),
           ),
@@ -819,7 +827,7 @@ class _WaypointRow extends StatelessWidget {
   final VoidCallback onDelete;
 
   const _WaypointRow({
-    super.key,
+    super.key,              //key se usa para identificar de manera única cada fila en la lista reordenable
     required this.index,
     required this.waypoint,
     required this.actionColor,
@@ -857,7 +865,7 @@ class _WaypointRow extends StatelessWidget {
               ),
               child: Center(
                 child: Text(
-                  '${index + 1}',
+                  '${index + 1}',               // número del waypoint 
                   style: const TextStyle(
                     color: Colors.white,
                     fontSize: 10,
@@ -872,7 +880,7 @@ class _WaypointRow extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${waypoint.lat.toStringAsFixed(5)}, ${waypoint.lon.toStringAsFixed(5)}',
+                    '${waypoint.lat.toStringAsFixed(5)}, ${waypoint.lon.toStringAsFixed(5)}',     // coordenadas del waypoint
                     style: const TextStyle(
                       color: C.text,
                       fontSize: 11,
@@ -880,13 +888,13 @@ class _WaypointRow extends StatelessWidget {
                     ),
                   ),
                   Text(
-                    '${waypoint.altM.toStringAsFixed(1)} m alt',
+                    '${waypoint.altM.toStringAsFixed(1)} m alt',                              // altitud del waypoint
                     style: const TextStyle(color: C.textMuted, fontSize: 10),
                   ),
                 ],
               ),
             ),
-            if (waypoint.action.type != WaypointActionType.none)
+            if (waypoint.action.type != WaypointActionType.none)  // si la acción no es "none", se muestra la etiqueta de acción
               Container(
                 margin: const EdgeInsets.only(right: 8),
                 padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -896,7 +904,7 @@ class _WaypointRow extends StatelessWidget {
                   border: Border.all(color: actionColor),
                 ),
                 child: Text(
-                  waypoint.action.label,
+                  waypoint.action.label,  // etiqueta de acción del waypoint
                   style: TextStyle(
                     color: actionColor,
                     fontSize: 10,
@@ -905,7 +913,7 @@ class _WaypointRow extends StatelessWidget {
                 ),
               ),
             GestureDetector(
-              onTap: onDelete,
+              onTap: onDelete,    // llama al método que borra el waypoint de la lista
               child: const Padding(
                 padding: EdgeInsets.all(4),
                 child: Icon(Icons.delete_outline, size: 16, color: C.danger),

@@ -1,10 +1,15 @@
 
 import 'package:flutter/material.dart';
 
-// Estilos y colores de la app
+// Estilos y colores de la app.
+// Están centralizados aquí para que todas las pantallas usen exactamente los
+// mismos valores: cambiando este fichero cambia el aspecto de toda la app, y el
+// rojo de peligro es literalmente el mismo rojo en todas partes.
 class AppColors {
 
   //--------------COLORES----------------
+  // Tema oscuro: fondo y superficies apagados para que la telemetría y el vídeo
+  // destaquen, y un color por significado (verde OK, naranja aviso, rojo peligro).
   static const Color background    = Color(0xFF1E1E2E);
   static const Color surface       = Color(0xFF2A2A3E);
   static const Color primary       = Color(0xFF4CAF50);
@@ -38,6 +43,8 @@ class TextStyles {
     letterSpacing: 1.2,
   );
 
+  // tabularFigures fuerza que todas las cifras ocupen lo mismo: sin esto, un
+  // valor de telemetría que cambia de dígito hace bailar el texto en pantalla.
   static const TextStyle instrument = TextStyle(
     color: AppColors.textPrimary,
     fontSize: 19,

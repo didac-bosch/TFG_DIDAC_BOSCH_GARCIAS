@@ -10,6 +10,15 @@ import '../core/drone_video_view.dart';
 // ─── PANTALLA PRINCIPAL ───────────────────────────────────────────────────────
 // Abre un mapa satélite interactivo para colocar waypoints y asignarles
 // acciones. Permite guardar el plan localmente y subirlo al dron via MQTT.
+//
+// Tiene dos caras muy distintas y comparten pantalla:
+//   - EDITOR: se toca el mapa para añadir waypoints, se reordenan arrastrando y
+//     a cada uno se le puede dar una acción (hover, foto, vídeo, RTL, land).
+//   - SEGUIMIENTO: una vez la misión está en marcha, la misma pantalla muestra
+//     por qué waypoint va el dron, según los avisos que llegan de la estación.
+//
+// El plan se guarda en el navegador (localStorage vía el provider) y se sube al
+// dron como un JSON por MQTT.
 
 class FlightPlanScreen extends StatefulWidget {
   /// null = plan nuevo, non-null = editar plan existente
@@ -34,6 +43,11 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
   @override
   void initState() {
     super.initState();
+    // Si se abre para editar un plan existente se copia su contenido; si es un
+    // plan nuevo, el id se genera con la hora actual en milisegundos (basta para
+    // que sea único dentro de este navegador).
+    // Ojo: se copia la lista, no se referencia. Así, si el usuario edita y no
+    // guarda, el plan original no queda tocado.
     final plan = widget.existingPlan;
     _planId = plan?.id ?? DateTime.now().millisecondsSinceEpoch.toString();
     _waypoints = List<FlightWaypoint>.from(plan?.waypoints ?? []);
@@ -67,11 +81,14 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
     return 'Plan ${now.day} ${m[now.month - 1]} ${now.year}';
   }
 
+  // Distancia total del recorrido: suma de los tramos entre waypoints
+  // consecutivos, usando la fórmula del haversine (distancia sobre la esfera
+  // terrestre; con Pitágoras plano el error crecería con la distancia).
   double _calcTotalDist() {
     if (_waypoints.length < 2) return 0;
     double d = 0;
     for (int i = 1; i < _waypoints.length; i++) {
-      const R = 6371000.0;
+      const R = 6371000.0; // radio medio de la Tierra, en metros
       final a = _waypoints[i - 1];
       final b = _waypoints[i];
       final lat1 = a.lat * pi / 180;
@@ -91,6 +108,8 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
     return '${(m / 1000).toStringAsFixed(2)} km';
   }
 
+  // Centra el mapa en el punto medio de todos los waypoints, para que el plan
+  // entero quede a la vista al abrirlo.
   LatLng get _mapCenter {
     if (_waypoints.isEmpty) return _defaultCenter;
     final lat =
@@ -155,6 +174,11 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
 
   // ── Acciones ───────────────────────────────────────────────────────────────
 
+  // Cada toque en el mapa añade un waypoint al final, con la altitud que el
+  // usuario configuró en la pantalla de setup.
+  // En estos tres métodos siempre se crea una lista NUEVA en vez de modificar la
+  // que había: Flutter compara referencias para decidir si tiene que repintar, y
+  // mutando la lista en el sitio la pantalla podría no enterarse del cambio.
   void _onMapTap(TapPosition _, LatLng point) {
     final provider = context.read<DronProvider>();
     setState(() {
@@ -177,6 +201,9 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
     });
   }
 
+  // Reordenar arrastrando en la lista. El ajuste del índice es obligatorio en
+  // ReorderableListView: al mover un elemento hacia abajo, el destino que da
+  // Flutter cuenta el hueco que deja el propio elemento, así que sobra uno.
   void _reorderWaypoints(int oldIndex, int newIndex) {
     if (newIndex > oldIndex) newIndex--;
     setState(() {
@@ -583,12 +610,16 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
                 const SizedBox(width: 4),
               ],
       ),
+      // Aquí es donde la pantalla cambia de cara: con la misión en marcha pasa a
+      // modo seguimiento; el resto del tiempo, editor.
       body: isMission
           ? _buildMissionTracking(context, provider)
           : _buildEditor(context, provider, totalDist),
     );
   }
 
+  // Editor: mapa arriba para colocar waypoints y lista abajo para reordenarlos y
+  // asignarles acciones.
   Widget _buildEditor(
     BuildContext context,
     DronProvider provider,
@@ -824,6 +855,9 @@ class _FlightPlanScreenState extends State<FlightPlanScreen> {
     );
   }
 
+  // Seguimiento: mapa a pantalla completa con el waypoint actual resaltado.
+  // El índice activo no lo decide la app: llega de la estación de tierra por
+  // MQTT (topicMissionWaypoint) cada vez que el dron alcanza uno.
   Widget _buildMissionTracking(BuildContext context, DronProvider provider) {
     final activeIdx = provider.activeMissionWaypoint;
     final dronePos = (provider.currentLat != 0.0)

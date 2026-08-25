@@ -1,14 +1,6 @@
 // ===========================================================================
 // SAMPLE FLIGHT DATA
 // ===========================================================================
-// Aquí se definen los modelos de datos y se fabrican los tres vuelos de ejemplo
-// que alimentan la demo del Flight Log Viewer.
-//
-// En el EZDrone real, este fichero se correspondería con las clases
-// FlightSession y FlightLog del Provider (provider.dart): allí los datos se van
-// acumulando en directo mientras el dron vuela. Aquí, en cambio, se generan de
-// forma sintética para tener algo que enseñar sin necesidad de volar.
-//
 // MODELOS QUE EXPORTA:
 //   FlightLog     - foto de la telemetría en un instante concreto
 //   FlightSession - un vuelo entero (trayectoria + log + métricas)
@@ -48,9 +40,7 @@ class FlightLog {
   });
 }
 
-// Un vuelo completo. Es el equivalente a FlightSession en el Provider de
-// EZDrone, donde los campos se van rellenando en directo y se guardan al
-// aterrizar.
+// Vuelo completo
 class FlightSession {
   final DateTime startTime;
   final Duration duration;
@@ -73,7 +63,7 @@ class FlightSession {
   // -------- Métricas calculadas -----------------------------------------------
 
   // Altura máxima que alcanzó el dron (m).
-  double get maxAlt   => log.isEmpty ? 0 : log.map((s) => s.alt).reduce(max);
+  double get maxAlt   => log.isEmpty ? 0 : log.map((s) => s.alt).reduce(max); 
 
   // Velocidad punta del vuelo (m/s).
   double get maxSpeed => log.isEmpty ? 0 : log.map((s) => s.speed).reduce(max);
@@ -87,7 +77,7 @@ class FlightSession {
     return log.map((s) => s.alt).reduce(max) - log.first.alt;
   }
 
-  // Distancia total recorrida, sumando tramo a tramo con Haversine (m).
+  // Distancia total recorrida, sumando tramo a tramo con función Haversine (m).
   double get totalDistanceM {
     if (trail.length < 2) return 0;
     double d = 0;
@@ -201,12 +191,16 @@ List<FlightSession> _buildSessions() {
 //     el último 15 %
 //   - la batería cae de forma lineal a lo largo del vuelo
 //   - el heading apunta siempre hacia el siguiente punto de la ruta
+
+
+// Lista de FlightLog generada a partir de la lista de coordenadas GPS y la altura objetivo.
 List<FlightLog> _genLog(
   DateTime start,
   List<LatLng> coords,
   double targetAlt,
-  Random rng,
+  Random rng, // rng para generar ruido en altitud, velocidad y batería
 ) {
+  // Se generan tantos FlightLog como coordenadas GPS haya en la ruta
   final logs = <FlightLog>[];
   final n    = coords.length;
 
@@ -234,19 +228,19 @@ List<FlightLog> _genLog(
     // Heading: rumbo hacia el siguiente punto (fórmula del bearing inicial)
     double heading = 0;
     if (i < n - 1) {
-      final from = coords[i];
-      final to   = coords[i + 1];
-      final dLon = (to.longitude - from.longitude) * pi / 180;
-      final lat1 = from.latitude * pi / 180;
-      final lat2 = to.latitude   * pi / 180;
-      final y = sin(dLon) * cos(lat2);
-      final x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon);
-      heading = (atan2(y, x) * 180 / pi + 360) % 360;
+      final from = coords[i]; // punto actual
+      final to   = coords[i + 1]; // punto siguiente
+      final dLon = (to.longitude - from.longitude) * pi / 180;  // diferencia de longitudes en radianes
+      final lat1 = from.latitude * pi / 180;  // latitud en radianes
+      final lat2 = to.latitude   * pi / 180;  
+      final y = sin(dLon) * cos(lat2);  // componente este-oeste
+      final x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon);  // componente norte-sur
+      heading = (atan2(y, x) * 180 / pi + 360) % 360; // conversión a grados y normalización a 0-360
     }
 
-    logs.add(FlightLog(
+    logs.add(FlightLog(   // Se añade un nuevo snapshot de telemetría a la lista
       timestamp: start.add(Duration(
-        seconds: (i * (300 / n.clamp(1, 9999))).round(),
+        seconds: (i * (300 / n.clamp(1, 9999))).round(),  
       )),
       lat:     coords[i].latitude,
       lon:     coords[i].longitude,

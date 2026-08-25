@@ -11,6 +11,15 @@ import 'flight_log_screen.dart';
 import 'flight_plan_screen.dart';
 import 'tello_flight_screen.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SetupScreen — pantalla de entrada de EZDrone (la que abre main.dart).
+//
+// Aquí se elige QUÉ dron (ArduPilot / SITL / Tello) y CÓMO se va a pilotar
+// (Classic / Voice / IMU), se configuran altitud y velocidad, y se conecta.
+// El botón START FLIGHT es el que decide a cuál de las cinco pantallas de vuelo
+// se navega. Desde la AppBar se llega además al planificador y al historial.
+// ─────────────────────────────────────────────────────────────────────────────
+
 class SetupScreen extends StatelessWidget {
   const SetupScreen({super.key});
 
@@ -18,6 +27,9 @@ class SetupScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     final provider = context.watch<DronProvider>();
 
+    // Si el intento de conexión falló, el provider deja aquí el modo que falló.
+    // El diálogo no puede abrirse durante el build (estaríamos modificando el
+    // árbol mientras se construye), así que se aplaza al final del frame.
     if (provider.connectionErrorMode != null) {
       final mode = provider.connectionErrorMode!;
       provider.clearConnectionError();
@@ -61,6 +73,9 @@ class SetupScreen extends StatelessWidget {
       });
     }
 
+    // Se suma viewInsets.bottom para recuperar la altura real de la pantalla:
+    // al abrirse el teclado, size.height se encoge y sin esto la app creería
+    // que ha girado a horizontal.
     final mq = MediaQuery.of(context);
     final screenW = mq.size.width;
     final screenH = mq.size.height + mq.viewInsets.bottom;
@@ -80,6 +95,7 @@ class SetupScreen extends StatelessWidget {
           preferredSize: const Size.fromHeight(1),
           child: Container(color: const Color(0xFF3A3A50)),
         ),
+        // Accesos que no dependen de estar conectado: planificador, historial y ayuda
         actions: [
           IconButton(
             onPressed: () => Navigator.push(
@@ -89,6 +105,7 @@ class SetupScreen extends StatelessWidget {
             tooltip: 'Flight Planner',
             icon: const Icon(Icons.edit_location_alt_outlined, size: 22),
           ),
+          // El icono del historial lleva una chapa con el nº de vuelos guardados
           IconButton(
             onPressed: () => Navigator.push(
               context,
@@ -150,6 +167,8 @@ class SetupScreen extends StatelessWidget {
           const SizedBox(width: 8),
         ],
       ),
+      // Mismo contenido en dos disposiciones: en vertical va todo apilado y en
+      // horizontal en dos columnas, para que quepa sin scroll en el móvil.
       body: SafeArea(
         child: Builder(
           builder: (context) {
@@ -165,6 +184,8 @@ class SetupScreen extends StatelessWidget {
     );
   }
 
+  // Vertical: una sola columna con scroll. Todas las medidas son porcentajes de
+  // la pantalla, así el diseño se adapta a cualquier móvil sin valores fijos.
   Widget _buildPortrait(
     BuildContext context,
     DronProvider provider,
@@ -197,6 +218,7 @@ class SetupScreen extends StatelessWidget {
     );
   }
 
+  // Horizontal: selectores a la izquierda, parámetros y botones a la derecha.
   Widget _buildLandscape(
     BuildContext context,
     DronProvider provider,
@@ -252,6 +274,7 @@ class SetupScreen extends StatelessWidget {
 }
 
 // ── Section Card ──────────────────────────────────────────────────────────────
+// Marco gris reutilizable: da el mismo aspecto a cada bloque de la pantalla.
 
 class _SectionCard extends StatelessWidget {
   final Widget child;
@@ -273,6 +296,8 @@ class _SectionCard extends StatelessWidget {
 }
 
 // ── Hero Section ──────────────────────────────────────────────────────────────
+// Cabecera: logo, nombre y el estado actual de la conexión. El punto de color y
+// el icono cambian solos porque el provider notifica en cada cambio de estado.
 
 class _HeroSection extends StatelessWidget {
   final double screenW;
@@ -287,12 +312,15 @@ class _HeroSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Semáforo del estado: naranja conectando, verde conectado, gris parado
     final Color dotColor = provider.isLoading
         ? AppColors.warning
         : provider.isConnected
         ? AppColors.primary
         : AppColors.disabled;
 
+    // Proporcional a la pantalla pero con topes, para que no salga diminuto en
+    // un móvil estrecho ni gigante en un monitor.
     final double iconSize = (screenW * 0.15).clamp(44.0, 80.0);
 
     return Container(
@@ -375,6 +403,9 @@ class _HeroSection extends StatelessWidget {
 }
 
 // ── Drone Connection Mode Selector ────────────────────────────────────────────
+// Elige el vehículo: ArduPilot (dron real), SITL (simulador) o Tello. Esta
+// elección viaja por MQTT a la estación de tierra (topic setMode) y determina
+// con qué librería hablará: dronLink o TelloLink.
 
 class _DroneConnectionModeSelector extends StatelessWidget {
   final DronProvider provider;
@@ -383,6 +414,8 @@ class _DroneConnectionModeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Con el dron ya conectado no se puede cambiar de vehículo: habría que
+    // desconectar antes, porque la estación de tierra ya tiene una sesión abierta.
     final bool locked = provider.isConnected;
 
     return Column(
@@ -467,6 +500,8 @@ class _DroneConnectionModeSelector extends StatelessWidget {
   }
 }
 
+// Píldora seleccionable de vehículo. Se pinta con el color del modo cuando está
+// elegida y en gris cuando no.
 class _ConnectionChip extends StatelessWidget {
   final String label;
   final IconData icon;
@@ -529,6 +564,9 @@ class _ConnectionChip extends StatelessWidget {
 }
 
 // ── Control Mode Selector ─────────────────────────────────────────────────────
+// Elige CÓMO se pilota: joystick en pantalla (Classic), por voz (Voice) o
+// inclinando el móvil (IMU). A diferencia del selector de vehículo, esto no sale
+// de la app: solo decide a qué pantalla de vuelo se navega.
 
 class _ModeSelector extends StatelessWidget {
   final DronProvider provider;
@@ -537,6 +575,8 @@ class _ModeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // El Tello tiene su propia pantalla (con flip, follow, orbit y panorámica),
+    // así que voz e IMU no se ofrecen en ese modo.
     final bool isTello =
         provider.droneConnectionMode == DroneConnectionMode.tello;
 
@@ -661,6 +701,10 @@ class _ModeChip extends StatelessWidget {
 }
 
 // ── Config Fields ─────────────────────────────────────────────────────────────
+// Altitud de despegue y velocidad de navegación. Es StatefulWidget porque
+// necesita sus propios TextEditingController y una copia local de "el valor es
+// válido" para poner el campo en rojo mientras se escribe. La validación que
+// manda sigue siendo la del provider; esta solo es el aviso visual.
 
 class _ConfigFields extends StatefulWidget {
   final double screenW;
@@ -691,6 +735,8 @@ class _ConfigFieldsState extends State<_ConfigFields> {
     super.dispose();
   }
 
+  // Rangos permitidos. El replaceAll acepta la coma decimal: en un teclado en
+  // español se escribe "7,5" y double.tryParse solo entiende el punto.
   bool _checkAlt(String v) {
     final n = double.tryParse(v.replaceAll(',', '.'));
     return n != null && n >= 2.0 && n <= 50.0;
@@ -722,6 +768,8 @@ class _ConfigFieldsState extends State<_ConfigFields> {
       ],
     );
 
+    // El Tello despega siempre a la misma altura y no acepta velocidad de
+    // navegación, así que en ese modo no se muestran los campos.
     if (isTello) {
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -796,6 +844,8 @@ class _ConfigFieldsState extends State<_ConfigFields> {
                     borderRadius: BorderRadius.circular(8),
                   ),
                 ),
+                // Dos cosas en cada pulsación: repintar el campo (rojo/normal) y
+                // pasar el valor al provider, que lo valida por su cuenta.
                 onChanged: (v) {
                   setState(() => _altValid = _checkAlt(v));
                   context.read<DronProvider>().setAltitude(v);
@@ -868,6 +918,9 @@ class _ConfigFieldsState extends State<_ConfigFields> {
 }
 
 // ── Buttons ───────────────────────────────────────────────────────────────────
+// Los tres botones siguen la misma regla: el estado del provider decide si están
+// activos. Deshabilitarlos es la primera barrera de seguridad (la de verdad está
+// en el provider y en la estación de tierra).
 
 class _ConnectButton extends StatelessWidget {
   final double screenH;
@@ -877,6 +930,7 @@ class _ConnectButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Solo se puede conectar si no hay ya una conexión ni un intento en curso
     final bool active = !provider.isLoading && !provider.isConnected;
 
     return SizedBox(
@@ -896,10 +950,10 @@ class _ConnectButton extends StatelessWidget {
                   )
                 : null,
           ),
-          // DESPUÉS
           child: Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
+              // Mientras conecta, el icono se sustituye por la ruedecita
               if (provider.isLoading && !provider.isConnected)
                 const SizedBox(
                   width: 18,
@@ -917,7 +971,7 @@ class _ConnectButton extends StatelessWidget {
                 ),
               const SizedBox(width: 10),
               Text(
-                provider.isConnected ? 'CONNECTED' : 'CONNECT', // 👈 CAMBIO
+                provider.isConnected ? 'CONNECTED' : 'CONNECT',
                 style: TextStyle(
                   fontSize: 15,
                   fontWeight: FontWeight.bold,
@@ -933,6 +987,8 @@ class _ConnectButton extends StatelessWidget {
   }
 }
 
+// Botón que abre la pantalla de vuelo. Es el punto donde se cruzan las dos
+// elecciones del usuario (vehículo y modo de control) para decidir el destino.
 class _StartFlightButton extends StatelessWidget {
   final double screenH;
   final DronProvider provider;
@@ -941,11 +997,13 @@ class _StartFlightButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Hace falta estar conectado Y que altitud y velocidad sean válidas
     final bool active =
         !provider.isLoading &&
         provider.isConnected &&
         provider.isConfigValid;
 
+    // El botón se tiñe del color del modo elegido, igual que su píldora
     final Color modeColor = switch (provider.selectedMode) {
       ControlMode.classic => AppColors.primary,
       ControlMode.voice => Colors.teal,
@@ -964,7 +1022,12 @@ class _StartFlightButton extends StatelessWidget {
       child: GestureDetector(
         onTap: active
             ? () {
+                // Pantalla completa vía JavaScript: en el navegador la barra de
+                // direcciones roba altura y estorba al pilotar.
                 requestFullscreenEZ();
+
+                // El Tello manda sobre el modo de control: tenga lo que tenga
+                // seleccionado, va siempre a su pantalla dedicada.
                 if (provider.droneConnectionMode == DroneConnectionMode.tello) {
                   Navigator.push(
                     context,
@@ -974,6 +1037,7 @@ class _StartFlightButton extends StatelessWidget {
                   );
                   return;
                 }
+                // Para ArduPilot y SITL, el modo de control elige la pantalla
                 switch (provider.selectedMode) {
                   case ControlMode.classic:
                     Navigator.push(
@@ -1043,6 +1107,8 @@ class _DisconnectButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Aquí basta con estar conectado: desde esta pantalla el dron aún no vuela.
+    // El bloqueo de "no desconectar en vuelo" está en las pantallas de vuelo.
     final bool enabled = !provider.isLoading && provider.isConnected;
 
     return SizedBox(
@@ -1089,6 +1155,8 @@ class _DisconnectButton extends StatelessWidget {
 }
 
 // ── Help sheet ────────────────────────────────────────────────────────────────
+// Panel deslizante con las instrucciones de uso (el "?" de la barra superior).
+// Es solo texto: no toca el provider ni el dron.
 
 void _showHelpSheet(BuildContext context) {
   showModalBottomSheet(
@@ -1158,7 +1226,7 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.zoom_in,
-                  'Zoom bar (×1–×5) — available in camera view only',
+                  'Zoom bar (x1-x5) — available in camera view only',
                 ),
                 _HelpItem(
                   Icons.search,
@@ -1166,7 +1234,7 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.check_circle,
-                  'Flow: CONNECT → ARM → TAKEOFF → fly → LAND or RTL → DISCONNECT',
+                  'Flow: CONNECT - ARM - TAKEOFF - fly - LAND or RTL - DISCONNECT',
                 ),
               ],
             ),
@@ -1194,7 +1262,7 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.warning_amber,
-                  'Dead zone ±5–15° (fwd) / ±10° (lateral) ignored',
+                  'Dead zone ±5-15° (fwd) / ±10° (lateral) ignored',
                 ),
                 _HelpItem(Icons.info_outline, 'Not available for Tello'),
               ],
@@ -1209,7 +1277,7 @@ void _showHelpSheet(BuildContext context) {
                   Icons.touch_app,
                   'First tap 🎤 — grants microphone permission in the browser',
                 ),
-                _HelpItem(Icons.mic, 'Hold 🎤 → speak → release → executes'),
+                _HelpItem(Icons.mic, 'Hold 🎤 - speak - release - executes'),
                 _HelpItem(
                   Icons.record_voice_over,
                   'armar · despegar · aterrizar · para / stop',
@@ -1265,7 +1333,7 @@ void _showHelpSheet(BuildContext context) {
                 ),
                 _HelpItem(
                   Icons.rotate_right,
-                  'Orbit: orbits around a person — adjust radius with slider (30–200 cm)',
+                  'Orbit: orbits around a person — adjust radius with slider (30-200 cm)',
                 ),
                 _HelpItem(
                   Icons.warning_amber,

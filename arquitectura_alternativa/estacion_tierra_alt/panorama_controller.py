@@ -60,29 +60,42 @@ def _desplazamientos(frames):
 # suavizar los bordes y evitar costuras visibles. Conserva el orden de canal de
 # la entrada (aqui RGB, ya que los frames vienen de tello.get_frame()).
 def _mosaico(frames, pasos, cierra):
+    # Posicion horizontal donde va cada foto en el lienzo final: la suma de todos
+    # los desplazamientos anteriores. W es el ancho total resultante.
     h, n = frames[0].shape[0], len(frames)
     offsets = [sum(pasos[:i]) for i in range(n)]
     W = sum(pasos) if cierra else offsets[-1] + pasos[-2]
+    # Se acumula en float y se lleva un lienzo de pesos aparte: al final se divide
+    # uno por otro para obtener la media ponderada (media normal = costuras).
     acc = np.zeros((h, W, 3), np.float32)
     peso = np.zeros((h, W, 1), np.float32)
     for i, (f, off) in enumerate(zip(frames, offsets)):
         s = pasos[i] if cierra or i < n - 1 else pasos[i - 1]
         c = f.shape[1] // 2
+        # Ventana triangular: cada foto pesa 1 en su centro y 0 en los extremos,
+        # asi dos fotos vecinas se funden gradualmente en la zona que comparten.
         win = (1 - np.abs(np.linspace(-1, 1, 2 * s))).reshape(1, 2 * s, 1).astype(np.float32)
+        # Solo se usa la franja central de cada foto: los bordes son los que mas
+        # deformacion de lente tienen.
         franja = f[:, c - s:c + s].astype(np.float32)
         col = np.arange(2 * s) + off - s
         if cierra:
+            # La vuelta cerro: el lienzo es circular y lo que se sale por un lado
+            # entra por el otro (de ahi el modulo).
             col %= W
         else:
             valido = (col >= 0) & (col < W)
             col, franja, win = col[valido], franja[:, valido], win[:, valido]
         acc[:, col] += franja * win
         peso[:, col] += win
+    # El maximo con 1e-6 evita dividir por cero en columnas sin ninguna foto.
     return (acc / np.maximum(peso, 1e-6)).astype(np.uint8)
 
 
 class PanoramaController:
 
+    # Arranca el escaneo nada mas crearse: se queda con el Tello compartido, prepara
+    # una carpeta temporal para las fotos y lanza el hilo daemon que gira y cose.
     def __init__(self, tello_ref, on_status=None, on_done=None):
         self._tello = tello_ref
         self._on_status = on_status   # callback(str): 'scanning'|'stitching'|'done'|'error'|'off'
@@ -93,6 +106,7 @@ class PanoramaController:
         self._thread.start()
 
     # ------------------------------------------------------------------
+    # Avisa al frontend del estado del panorama sin reventar si el callback falla
     def _status(self, s):
         if self._on_status is not None:
             try:
@@ -124,6 +138,7 @@ class PanoramaController:
         cv2.imwrite(os.path.join(self._tmpdir, name),
                     cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR))
 
+    # Mide los desplazamientos entre fotos y las cose en la panoramica final
     def _construir(self, frames):
         if len(frames) < 3:
             print('[PANORAMA] sin fotos suficientes')
@@ -148,6 +163,8 @@ class PanoramaController:
         return base64.b64encode(buf.tobytes()).decode('ascii')
 
     # ------------------------------------------------------------------
+    # Cuerpo del hilo: foto inicial -> gira 360 en pasos captando fotos -> cose ->
+    # entrega el resultado por on_done. Al final borra siempre las fotos temporales.
     def _run(self):
         frames = []
         try:
@@ -210,6 +227,7 @@ class PanoramaController:
             self._active = False
 
     # ------------------------------------------------------------------
+    # Cancela el escaneo, espera a que el hilo muera y deja el dron quieto
     def stop(self):
         self._active = False
         th = getattr(self, '_thread', None)

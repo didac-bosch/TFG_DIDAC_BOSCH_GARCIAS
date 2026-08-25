@@ -3,7 +3,16 @@ import 'dart:js_interop_unsafe';
 import 'package:web/web.dart' as web;
 
 
-//Acceso a API nativa del navegador (SpeechRecognition)
+// ─────────────────────────────────────────────────────────────────────────────
+// Acceso a la API nativa del navegador (SpeechRecognition), usada por el modo de
+// control por voz.
+//
+// El reconocimiento NO lo hace la app: lo hace el propio navegador, que envía el
+// audio a su servicio de transcripción y devuelve texto. Aquí solo se envuelve
+// esa API de JavaScript para poder llamarla desde Dart.
+// Requisitos: solo funciona sobre HTTPS y no está en todos los navegadores (de
+// ahí el initialize() que comprueba si existe antes de ofrecer el modo voz).
+// ─────────────────────────────────────────────────────────────────────────────
 
 extension type SpeechRecognitionJS._(JSObject _) implements JSObject {    //conversión a tipo extension para poder tratar objetos JavaScript
   external set continuous(bool value);  
@@ -94,8 +103,8 @@ class WebSpeech {                     //Clase de reconocimiento principal
 
     _recognition = _createRecognition();
 
-    _recognition!.continuous = false;    // push-to-talk
-    _recognition!.interimResults = true; // Texto parcias
+    _recognition!.continuous = false;    // push-to-talk: una frase por pulsación
+    _recognition!.interimResults = true; // texto parcial mientras se habla
     _recognition!.lang = localeId;  //Declarado antes como español
 
     // Resultado parcial o final — actualiza el texto en pantalla

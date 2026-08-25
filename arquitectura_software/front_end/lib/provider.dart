@@ -126,7 +126,7 @@ class DronProvider extends ChangeNotifier {
       isConnected = true; //si se ha podido connected = true
       message = "Connection established!";
       startPolling(); // empieza a recibir telemetría y posición al conectar
-      startGPS();     // ← NUEVO: arranca GPS al conectar
+      startGPS();     // arranca GPS al conectar
     } catch (error) {
       message = "$error";
     } finally {

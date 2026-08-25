@@ -11,6 +11,18 @@ import 'package:latlong2/latlong.dart';
 import '../core/js_bridges.dart';
 import '../core/drone_video_view.dart';
 
+// ─────────────────────────────────────────────────────────────────────────────
+// FlightScreen — pilotaje clásico (modo Classic con ArduPilot o SITL).
+//
+// Tres franjas: banner de estado arriba, viewport en medio y barra de botones
+// abajo. El viewport alterna entre mapa y vídeo WebRTC en el mismo hueco, y los
+// dos joysticks flotan encima.
+//
+// Los joysticks NO van por MQTT: sus valores salen por el DataChannel de WebRTC
+// (ver DronProvider.updateJoystick), porque hacen falta decenas de envíos por
+// segundo. Los botones de abajo sí son comandos MQTT.
+// ─────────────────────────────────────────────────────────────────────────────
+
 class FlightScreen extends StatefulWidget {
   const FlightScreen({super.key});
 
@@ -19,6 +31,7 @@ class FlightScreen extends StatefulWidget {
 }
 
 class _FlightScreenState extends State<FlightScreen> {
+  // Solo para el efecto visual del joystick pulsado (borde y halo)
   bool _leftActive = false;
   bool _rightActive = false;
 
@@ -47,6 +60,8 @@ class _FlightScreenState extends State<FlightScreen> {
     );
   }
 
+  // Horizontal: paneles de instrumentos a los lados y el viewport en el centro.
+  // Es la disposición pensada para pilotar (el móvil se sujeta apaisado).
   Widget _buildLandscapeBody(
     BuildContext context,
     DronProvider provider,
@@ -71,7 +86,11 @@ class _FlightScreenState extends State<FlightScreen> {
               children: [
                 _MapVideoViewport(provider: provider),
                 _MapOverlays(provider: provider),
-                // Joystick izquierdo
+                // Joystick izquierdo — subir/bajar y girar.
+                // El 0.35 recorta el recorrido a un tercio: a fondo de escala el
+                // giro y la subida son demasiado bruscos para pilotar con el dedo.
+                // La y se invierte porque en pantalla crece hacia abajo y en vuelo
+                // "arriba" tiene que ser subir.
                 Positioned(
                   left: 12,
                   bottom: 12,
@@ -90,7 +109,8 @@ class _FlightScreenState extends State<FlightScreen> {
                     },
                   ),
                 ),
-                // Joystick derecho
+                // Joystick derecho — avanzar/retroceder y desplazarse de lado.
+                // Aquí no se recorta: es el eje que más se usa para desplazarse.
                 Positioned(
                   right: 12,
                   bottom: 12,
@@ -123,6 +143,8 @@ class _FlightScreenState extends State<FlightScreen> {
     );
   }
 
+  // Vertical: no caben paneles laterales, así que la telemetría pasa a una fila
+  // compacta arriba y el viewport ocupa todo lo demás.
   Widget _buildPortraitBody(
     BuildContext context,
     DronProvider provider,
@@ -192,6 +214,8 @@ class _FlightScreenState extends State<FlightScreen> {
 }
 
 // ── Left Instrument Panel (landscape) ────────────────────────────────────────
+// Datos de posición y movimiento: altitud, velocidad y coordenadas. Las
+// coordenadas van con 6 decimales para poder compararlas con Mission Planner.
 
 class _LeftInstrumentPanel extends StatelessWidget {
   final DronProvider provider;
@@ -246,6 +270,7 @@ class _LeftInstrumentPanel extends StatelessWidget {
 }
 
 // ── Right Instrument Panel (landscape) ───────────────────────────────────────
+// Datos de orientación y estado: brújula, rumbo y estado del vehículo.
 
 class _RightInstrumentPanel extends StatelessWidget {
   final DronProvider provider;
@@ -287,6 +312,8 @@ class _RightInstrumentPanel extends StatelessWidget {
 }
 
 // ── Instrument Tile ───────────────────────────────────────────────────────────
+// Celda genérica etiqueta + valor + unidad. Usa cifras de ancho fijo
+// (tabularFigures) para que el número no baile al cambiar de dígito.
 
 class _InstrumentTile extends StatelessWidget {
   final String label;
@@ -345,6 +372,8 @@ class _InstrumentTile extends StatelessWidget {
 }
 
 // ── Compass Rose ──────────────────────────────────────────────────────────────
+// Brújula: lo que gira es la aguja (según el rumbo del dron), no la rosa. La N
+// se queda fija arriba, como en una brújula de verdad.
 
 class _CompassRose extends StatelessWidget {
   final double heading;
@@ -413,6 +442,9 @@ class _CompassRose extends StatelessWidget {
 }
 
 // ── Joystick Pad ──────────────────────────────────────────────────────────────
+// Envoltorio del joystick de la librería. Si el dron no vuela, en lugar del
+// stick muestra un candado: es la barrera visual que impide mover el dron antes
+// de despegar (la comprobación real está en el provider).
 
 class _JoystickPad extends StatelessWidget {
   final double size;
@@ -505,6 +537,8 @@ class _JoystickPad extends StatelessWidget {
 }
 
 // ── Map / Video Viewport ──────────────────────────────────────────────────────
+// El mismo hueco muestra el mapa o el vídeo de la cámara según isVideoActive.
+// El borde se enciende en azul mientras el dron vuela.
 
 class _MapVideoViewport extends StatelessWidget {
   final DronProvider provider;
@@ -535,6 +569,9 @@ class _MapVideoViewport extends StatelessWidget {
                       ),
                     ))
               : FlutterMap(
+                  // Se centra donde está el dron y, si aún no hay telemetría,
+                  // en el campus de la EETAC. Ojo: "initial" significa que solo
+                  // se aplica al construir el mapa; la cámara NO persigue al dron.
                   options: MapOptions(
                     initialCenter: LatLng(
                       provider.currentLat != 0.0 ? provider.currentLat : 41.2765,
@@ -542,6 +579,8 @@ class _MapVideoViewport extends StatelessWidget {
                     ),
                     initialZoom: 17,
                   ),
+                  // Capas apiladas de abajo arriba: satélite, traza, vector de
+                  // velocidad, posición del usuario, sombra y dron.
                   children: [
                     TileLayer(
                       urlTemplate:
@@ -591,6 +630,11 @@ class _MapVideoViewport extends StatelessWidget {
                           ),
                         ],
                       ),
+                    // Sombra bajo el dron, solo en vuelo: da sensación de altura.
+                    // Los ValueListenableBuilder de aquí abajo escuchan la posición
+                    // INTERPOLADA a 60 fps del provider, no la telemetría cruda.
+                    // Así el icono se desliza en vez de saltar entre paquetes, y
+                    // además solo se repinta el marcador, no la pantalla entera.
                     if (provider.isFlying)
                       ValueListenableBuilder<LatLng>(
                         valueListenable: provider.droneRenderPos,
@@ -623,6 +667,9 @@ class _MapVideoViewport extends StatelessWidget {
                                   clipBehavior: Clip.none,
                                   alignment: Alignment.center,
                                   children: [
+                                    // RepaintBoundary aísla el icono en su propia
+                                    // capa de dibujo: al rotar 60 veces por segundo,
+                                    // evita repintar todo lo que hay debajo.
                                     RepaintBoundary(
                                       child: Image.asset(
                                         'assets/images/drone_icon.png',
@@ -668,7 +715,8 @@ class _MapOverlays extends StatelessWidget {
 
     return Stack(
       children: [
-        // Badge GPS (solo en mapa)
+        // Badge GPS (solo en mapa). El color avisa de la calidad de la señal:
+        // verde hasta 5 m de error, naranja hasta 20 y rojo por encima.
         if (provider.userPosition != null && !provider.isVideoActive)
           Positioned(
             top: 10,
@@ -704,7 +752,9 @@ class _MapOverlays extends StatelessWidget {
             ),
           ),
 
-        // Fila top-right: swap + controles de cámara si está activo el vídeo
+        // Fila top-right: swap + controles de cámara si está activo el vídeo.
+        // Foto, grabar y cambiar de cámara solo tienen sentido viendo el vídeo;
+        // el botón de swap mapa/vídeo está siempre.
         Positioned(
           top: 8,
           right: 8,
@@ -748,7 +798,8 @@ class _MapOverlays extends StatelessWidget {
           ),
         ),
 
-        // Dropdown YOLO (solo en vídeo)
+        // Dropdown YOLO (solo en vídeo). Lo que se elige aquí viaja por MQTT a la
+        // estación de tierra: es ella la que decide qué dibujar sobre los frames.
         if (provider.isVideoActive)
           Positioned(
             top: 8,
@@ -768,7 +819,8 @@ class _MapOverlays extends StatelessWidget {
             child: _RecBadge(),
           ),
 
-        // Barra de zoom
+        // Barra de zoom: vertical en retrato y horizontal en apaisado, para no
+        // tapar el vídeo ni quedar debajo de los joysticks.
         if (provider.isVideoActive)
           if (isPortrait)
             Positioned(
@@ -790,6 +842,11 @@ class _MapOverlays extends StatelessWidget {
 }
 
 // ── Action Bar ────────────────────────────────────────────────────────────────
+// Los cinco comandos discretos, los que sí van por MQTT. Están agrupados por
+// fases del vuelo y separados por líneas: preparación (ARM, TAKEOFF), vuelta
+// (LAND, RTL) y, aparte, DISCONNECT.
+// Cada botón repite la condición de estado que ya comprueba el provider: aquí
+// es para que el usuario vea qué puede hacer, no para proteger el dron.
 
 class _ActionBar extends StatelessWidget {
   final DronProvider provider;
@@ -873,7 +930,9 @@ class _ActionBar extends StatelessWidget {
             color: AppColors.border,
           ),
 
-          // DISCONNECT aislado
+          // DISCONNECT aislado y bloqueado mientras el dron esté armado o
+          // volando: desconectar en el aire dejaría al dron sin nadie al mando.
+          // Primero aterrizar, luego desarmar, y solo entonces desconectar.
           Expanded(
             child: _ActionButton(
               icon: Icons.link_off,
@@ -884,6 +943,8 @@ class _ActionBar extends StatelessWidget {
                   !provider.isFlying,
               color: AppColors.danger,
               outlined: true,
+              // Al salir: deshacer la pantalla completa, desconectar y volver
+              // a la pantalla de configuración.
               onTap: () {
                 exitFullscreenEZ();
                 context.read<DronProvider>().disconnectDron();
@@ -897,6 +958,8 @@ class _ActionBar extends StatelessWidget {
   }
 }
 
+// Botón de la barra inferior. Con outlined:true sale solo con borde (se reserva
+// para DISCONNECT, para que no se confunda con los botones de vuelo).
 class _ActionButton extends StatelessWidget {
   final IconData icon;
   final String label;
@@ -1242,12 +1305,21 @@ class _DetectionDropdown extends StatelessWidget {
 }
 
 // ── Velocity endpoint ─────────────────────────────────────────────────────────
+// Calcula dónde acaba la flecha verde de velocidad: se parte de la posición del
+// dron y se avanza en la dirección en que se mueve.
+// Para pasar de metros a grados se usa que un grado de latitud son ~111.320 m;
+// en longitud hay que corregir por el coseno de la latitud, porque los
+// meridianos se juntan al acercarse a los polos.
 
 LatLng _calcVelocityEndPoint(double lat, double lon, double vx, double vy) {
+  // Con el dron casi quieto no se dibuja nada, para que no tiemble una flecha
+  // apuntando al ruido de la medida.
   final speed = sqrt(vx * vx + vy * vy);
   if (speed < 0.5) return LatLng(lat, lon);
   const scale = 6.0;
   final dlat = (vx * scale) / 111320;
   final dlon = (vy * scale) / (111320 * cos(lat * pi / 180));
+  // El /50 final acorta la flecha para que quepa en el zoom del mapa: es un
+  // indicador visual de dirección, no una medida a escala.
   return LatLng((lat + dlat/50), (lon + dlon/50));
 }

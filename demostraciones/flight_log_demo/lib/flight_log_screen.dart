@@ -6,12 +6,10 @@
 // recorrer el vuelo y la descarga del log en CSV.
 //
 // Aquí solo vive la parte visual (UI). Los datos salen de
-// sample_flight_data.dart, que expone la lista sampleSessions. En el EZDrone
-// real esos mismos datos se leerían del Provider (provider.flightHistory) y se
-// irían llenando en directo mientras se vuela.
+// sample_flight_data.dart, que expone la lista sampleSessions. 
 //
 // QUÉ HAY EN ESTE FICHERO:
-//   AppColors           - paleta de colores, la misma que EZDrone
+//   AppColors           - paleta de colores
 //   FlightLogScreen     - la lista principal de sesiones
 //   _SessionCard        - la tarjeta resumen de una sesión
 //   _MetricTile         - una métrica suelta (icono + valor + etiqueta)
@@ -23,7 +21,7 @@
 
 import 'dart:js_interop';
 import 'dart:math';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb;  
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
@@ -32,7 +30,7 @@ import 'sample_flight_data.dart';
 
 // -------- COLORES ------------------------------
 
-// Paleta de la app (mismos tonos oscuros y morado que usa EZDrone)
+// Paleta de la app 
 class AppColors {
   static const background = Color(0xFF0D0D0F);
   static const surface = Color(0xFF1A1A1F);
@@ -53,13 +51,10 @@ class FlightLogScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // En EZDrone esto sería: context.watch<DronProvider>().flightHistory;
-    // Aquí, al ser demo, se tira de la lista de ejemplo fija.
-    final sessions = sampleSessions;
-
+    final sessions = sampleSessions;  // lista de vuelos de ejemplo, importada de sample_flight_data.dart
     final screenH = MediaQuery.of(context).size.height;
     final isLandscape =
-        MediaQuery.of(context).orientation == Orientation.landscape;
+        MediaQuery.of(context).orientation == Orientation.landscape;  // true si la pantalla está en horizontal 
 
     return Scaffold(
       backgroundColor: AppColors.background,
@@ -76,8 +71,9 @@ class FlightLogScreen extends StatelessWidget {
         backgroundColor: AppColors.surface,
         elevation: 0,
         centerTitle: true,
-        toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06,
+        toolbarHeight: isLandscape ? screenH * 0.09 : screenH * 0.06, // altura de la barra superior según orientación
         actions: [
+
           // Contador con el número de vuelos guardados
           Padding(
             padding: const EdgeInsets.only(right: 16),
@@ -92,7 +88,7 @@ class FlightLogScreen extends StatelessWidget {
                   borderRadius: BorderRadius.circular(12),
                 ),
                 child: Text(
-                  '${sessions.length}',
+                  '${sessions.length}', // número de vuelos guardados
                   style: const TextStyle(
                     color: AppColors.textPrimary,
                     fontSize: 12,
@@ -106,10 +102,10 @@ class FlightLogScreen extends StatelessWidget {
       ),
 
       // Lista scrollable, una tarjeta por sesión
-      body: ListView.builder(
+      body: ListView.builder(                       // lista de vuelos
         padding: const EdgeInsets.all(12),
-        itemCount: sessions.length,
-        itemBuilder: (ctx, i) => _SessionCard(session: sessions[i]),
+        itemCount: sessions.length,     // número de vuelos en la lista
+        itemBuilder: (ctx, i) => _SessionCard(session: sessions[i]),      // cada tarjeta de vuelo se construye con _SessionCard, pasando la sesión correspondiente
       ),
     );
   }
@@ -123,14 +119,14 @@ class _SessionCard extends StatelessWidget {
   final FlightSession session;
   const _SessionCard({required this.session});
 
-  @override
-  Widget build(BuildContext context) {
+  @override 
+  Widget build(BuildContext context) {  // Construye la tarjeta de vuelo con la información de la sesión
     final modeColor = _modeColor(session.controlMode);
     final distStr = _formatDistance(session.totalDistanceM);
     final durStr = _formatDuration(session.duration);
 
-    return GestureDetector(
-      onTap: () => _openDetail(context),
+    return GestureDetector(   // Detecta el toque en la tarjeta para abrir el detalle del vuelo
+      onTap: () => _openDetail(context),  // abre el panel inferior con el detalle del vuelo
       child: Container(
         margin: const EdgeInsets.only(bottom: 10),
         decoration: BoxDecoration(
@@ -150,7 +146,7 @@ class _SessionCard extends StatelessWidget {
                 children: [
                   Expanded(
                     child: Text(
-                      'Flight ${_formatDate(session.startTime)}',
+                      'Flight ${_formatDate(session.startTime)}', // fecha del vuelo
                       style: const TextStyle(
                         color: AppColors.textPrimary,
                         fontSize: 13,
@@ -172,7 +168,7 @@ class _SessionCard extends StatelessWidget {
                       border: Border.all(color: modeColor),
                     ),
                     child: Text(
-                      session.controlMode.toUpperCase(),
+                      session.controlMode.toUpperCase(), 
                       style: const TextStyle(
                         color: Colors.white,
                         fontSize: 10,
@@ -208,6 +204,7 @@ class _SessionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 6),
+
               // Línea de estado: completado (verde) o interrumpido (ámbar)
               Row(
                 children: [
@@ -233,11 +230,12 @@ class _SessionCard extends StatelessWidget {
                 ],
               ),
               const SizedBox(height: 12),
+
               // ------ Fila de métricas: duración, distancia, alturas y velocidad ------
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceAround,
                 children: [
-                  _MetricTile(Icons.timer_outlined, durStr, 'Duration'),
+                  _MetricTile(Icons.timer_outlined, durStr, 'Duration'),  // _metricTile es un widget que muestra un icono, un valor y una etiqueta
                   _MetricTile(Icons.straighten, distStr, 'Distance'),
                   _MetricTile(
                     Icons.height,
@@ -272,15 +270,13 @@ class _SessionCard extends StatelessWidget {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _FlightDetailSheet(session: session),
+      builder: (_) => _FlightDetailSheet(session: session), //builder devuelve el widget _FlightDetailSheet
     );
   }
 }
 
 // ------ TILE DE MÉTRICA --------------------------
-
-// Bloque pequeño (icono + valor + etiqueta) para una métrica suelta. Se usa en
-// la fila de métricas de la tarjeta de resumen.
+// Bloque pequeño (icono + valor + etiqueta) para una métrica suelta. 
 class _MetricTile extends StatelessWidget {
   final IconData icon;
   final String value;
@@ -322,7 +318,7 @@ class _FlightDetailSheet extends StatefulWidget {
   const _FlightDetailSheet({required this.session});
 
   @override
-  State<_FlightDetailSheet> createState() => _FlightDetailSheetState();
+  State<_FlightDetailSheet> createState() => _FlightDetailSheetState(); // crea el estado del panel de detalle
 }
 
 class _FlightDetailSheetState extends State<_FlightDetailSheet> {
@@ -350,10 +346,11 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
     if (trail.isEmpty) return;
     if (trail.length == 1) {
       try {
-        _mapController.move(trail.first, 17);
+        _mapController.move(trail.first, 17); // si solo hay un punto, centra el mapa ahí con zoom 17
       } catch (_) {}
       return;
     }
+    // coordenadas SW y NE del rectángulo que encierra toda la trayectoria
     final lats = trail.map((p) => p.latitude);
     final lons = trail.map((p) => p.longitude);
     final sw = LatLng(lats.reduce(min), lons.reduce(min));
@@ -400,7 +397,6 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   }
 
   // Arma el texto del CSV, una fila por snapshot.
-  // Las columnas son las mismas que saca EZDrone al descargar un vuelo.
   String _buildCSV() {
     final sb = StringBuffer();
     sb.writeln('timestamp,lat,lon,alt_m,speed_ms,bat_pct,heading_deg');
@@ -419,16 +415,15 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   }
 
   // Lanza la descarga del CSV en el navegador con un <a> temporal.
-  // En EZDrone este helper se llama downloadCSVEZ() y vive en fullscreen.dart.
   void _downloadCSV() {
-    final csv = _buildCSV();
-    final dateStr = widget.session.startTime
+    final csv = _buildCSV();    // se construye el csv
+    final dateStr = widget.session.startTime  // fecha del vuelo en formato YYYY-MM-DDTHH-MM-SS
         .toIso8601String()
         .substring(0, 19)
         .replaceAll(':', '-');
-    final filename = 'flight_$dateStr.csv';
+    final filename = 'flight_$dateStr.csv'; // nombre del archivo con la fecha del vuelo
 
-    if (kIsWeb) {
+    if (kIsWeb) { // si estamos en un navegador web, se lanza la descarga del CSV
       _descargarWeb(csv, 'text/csv;charset=utf-8', filename);
     } else {
       // Fuera de Web no hay descarga nativa aquí: se enseña el CSV para copiarlo
@@ -437,18 +432,17 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   }
 
   // Descarga de verdad en el navegador: Blob -> objectURL -> click en <a download>
-  // Es lo mismo que hace downloadCSVEZ() de EZDrone (dart:js_interop + package:web)
   void _descargarWeb(String contenido, String mime, String filename) {
-    final blob = web.Blob(
-      [contenido.toJS].toJS,
-      web.BlobPropertyBag(type: mime),
+    final blob = web.Blob(  // se crea un blob con el contenido del CSV
+      [contenido.toJS].toJS,  // se convierte el contenido a JS
+      web.BlobPropertyBag(type: mime),  // se indica el tipo MIME del blob
     );
-    final url = web.URL.createObjectURL(blob);
-    web.HTMLAnchorElement()
+    final url = web.URL.createObjectURL(blob);  // se crea un objectURL para el blob
+    web.HTMLAnchorElement() // se crea un <a> temporal
       ..href = url
       ..download = filename
       ..click();
-    web.URL.revokeObjectURL(url);
+    web.URL.revokeObjectURL(url); // se revoca el objectURL para liberar memoria
   }
 
   // Plan B: enseña el CSV en un diálogo con el texto seleccionable.
@@ -507,7 +501,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) {    // Construye el panel de detalle del vuelo, con mapa, slider y estadísticas
     final session = widget.session;
     final trail = session.trail;
     final hasTrail = trail.length >= 2;
@@ -525,7 +519,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
           )
         : const LatLng(41.2745, 1.9880);
 
-    return DraggableScrollableSheet(
+    return DraggableScrollableSheet(  //DraggableScrollableSheet con info del vuelo
       initialChildSize: 0.88,
       minChildSize: 0.5,
       maxChildSize: 0.95,
@@ -659,13 +653,14 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                             initialZoom: 17,
                           ),
                           children: [
-                            // Capa de tiles satélite de ArcGIS (el mismo que EZDrone)
+                            // Capa de tiles satélite de ArcGIS 
                             TileLayer(
                               urlTemplate:
                                   'https://server.arcgisonline.com/ArcGIS/rest/services/'
                                   'World_Imagery/MapServer/tile/{z}/{y}/{x}',
                               userAgentPackageName: 'com.example.app',
                             ),
+
                             // Trayectoria completa, en gris de fondo
                             PolylineLayer(
                               polylines: [
@@ -676,6 +671,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                                 ),
                               ],
                             ),
+
                             // Tramo ya recorrido (hasta el slider), en violeta
                             if (visibleTrail.length >= 2)
                               PolylineLayer(
@@ -687,6 +683,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                                   ),
                                 ],
                               ),
+
                             // Marcadores: despegue, aterrizaje y flecha de posición actual
                             MarkerLayer(
                               markers: [
@@ -722,7 +719,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                             ),
                           ],
                         )
-                      : Container(
+                      : Container(      // si no hay trayectoria, enseña un mensaje de error
                           color: AppColors.background,
                           child: const Center(
                             child: Column(
@@ -758,15 +755,15 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                     const SizedBox(height: 6),
                     Center(
                       child: Text(
-                        _snapshotInfo(),
+                        _snapshotInfo(),    // enseña la telemetría del punto actual del slider
                         style: const TextStyle(
                           color: AppColors.textSecondary,
                           fontSize: 10,
                         ),
                       ),
                     ),
-                    SliderTheme(
-                      data: SliderTheme.of(context).copyWith(
+                    SliderTheme(                                      // personaliza el aspecto del slider
+                      data: SliderTheme.of(context).copyWith(   
                         trackHeight: 2,
                         thumbShape: const RoundSliderThumbShape(
                           enabledThumbRadius: 6,
@@ -779,7 +776,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                         thumbColor: AppColors.primary,
                         overlayColor: AppColors.primary,
                       ),
-                      child: Slider(
+                      child: Slider(  // slider con rango de 0 a trail.length - 1, que controla _playIndex
                         value: _playIndex.toDouble(),
                         min: 0,
                         max: (trail.length - 1).toDouble(),
@@ -792,7 +789,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
-                          Text(
+                          Text( // texto con la fecha y hora de inicio del vuelo
                             _formatDate(session.startTime),
                             style: const TextStyle(
                               color: AppColors.textSecondary,
@@ -824,13 +821,15 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                 children: [
                   Row(
                     children: [
-                      _StatCard(
+                      _StatCard(  //duración del vuelo
                         Icons.timer_outlined,
                         'Duration',
                         _formatDuration(session.duration),
                       ),
-                      const SizedBox(width: 10),
-                      _StatCard(
+
+                      const SizedBox(width: 10),  
+
+                      _StatCard(  //distancia total recorrida
                         Icons.straighten,
                         'Distance',
                         _formatDistance(session.totalDistanceM),
@@ -840,13 +839,15 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      _StatCard(
+                      _StatCard(  //altura máxima alcanzada
                         Icons.height,
                         'Max Alt',
                         '${session.maxAlt.toStringAsFixed(1)} m',
                       ),
+
                       const SizedBox(width: 10),
-                      _StatCard(
+
+                      _StatCard(  //desnivel alcanzado
                         Icons.trending_up,
                         'Desnivel',
                         '${session.altGain.toStringAsFixed(1)} m',
@@ -856,13 +857,15 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      _StatCard(
+                      _StatCard(  //velocidad máxima alcanzada
                         Icons.speed,
                         'Max Speed',
                         '${session.maxSpeed.toStringAsFixed(1)} m/s',
                       ),
+
                       const SizedBox(width: 10),
-                      _StatCard(
+
+                      _StatCard(  //batería mínima alcanzada
                         Icons.battery_full,
                         'Min Battery',
                         '${session.minBat.toStringAsFixed(0)} %',
@@ -877,13 +880,15 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                   const SizedBox(height: 10),
                   Row(
                     children: [
-                      _StatCard(
+                      _StatCard(  //número de snapshots guardados en el log
                         Icons.format_list_numbered,
                         'Snapshots',
                         '${session.log.length}',
                       ),
+
                       const SizedBox(width: 10),
-                      _StatCard(
+
+                      _StatCard(  //estado final del vuelo: completado o interrumpido
                         Icons.check_circle_outline,
                         'Status',
                         session.completed ? 'Completed' : 'Interrupted',
@@ -919,7 +924,7 @@ class _FlightDetailSheetState extends State<_FlightDetailSheet> {
                       borderRadius: BorderRadius.circular(12),
                     ),
                   ),
-                  onPressed: session.log.isEmpty ? null : _downloadCSV,
+                  onPressed: session.log.isEmpty ? null : _downloadCSV, // al pulsar el botón, se descarga el CSV si hay log, si no está desactivado
                 ),
               ),
             ),
