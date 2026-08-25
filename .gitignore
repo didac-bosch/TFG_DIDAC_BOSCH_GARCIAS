@@ -1,0 +1,43 @@
+# ---- Claves y certificados: NUNCA deben subirse a un repositorio ----
+*.pem
+*.key
+*.p12
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- Flutter y Dart ----
+build/
+.dart_tool/
+.packages
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+
+# ---- Editores y sistema operativo ----
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ---- Node ----
+node_modules/
+
+# ---- Salidas de LaTeX (la memoria se compila en Overleaf) ----
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.synctex.gz
+*.fls
+*.fdb_latexmk
+*.bbl
+*.blg
+.obsidian/
+.DS_Store
