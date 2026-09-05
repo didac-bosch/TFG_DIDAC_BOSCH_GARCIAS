@@ -15,8 +15,8 @@ Grado en Ingeniería de Sistemas Aeroespaciales · EETAC — Universitat Politè
 
 <br>
 
-<a href="https://youtu.be/uW29bb4BqlA">
-  <img src="https://img.youtube.com/vi/uW29bb4BqlA/hqdefault.jpg" width="640" alt="Resumen del TFG">
+<a href="https://youtu.be/uW29bb4BqIA">
+  <img src="https://img.youtube.com/vi/uW29bb4BqIA/hqdefault.jpg" width="640" alt="Resumen del TFG">
 </a>
 
 <sub><b>Resumen del proyecto</b> — un recorrido corto por toda la memoria: arquitectura,<br>demostraciones y evolución, de principio a fin</sub>
